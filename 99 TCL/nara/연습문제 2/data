@@ -1,0 +1,17 @@
+#
+# This is sample data file for Tcl/Tk programming project
+#
+
+TITLE           : Imaginary data for test
+COMMENT		: 1999.2.9
+
+DATA_NUM        :       4
+LOT_NUM 	: 	5
+
+FIELD_NAMES	:	LOT1 LOT2 LOT3 LOTP LOTK
+
+MPU        		100  200   400 500   20    
+DSP        		10   50     80 90    100
+PKG	   		300  400   320 430   650
+TGET       		400  210   330 410   200
+
