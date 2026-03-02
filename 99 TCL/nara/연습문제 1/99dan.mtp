@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<MYTCL>
+  <VERSION value="1.0"/>
+  <CREATION value="03/01/2026 18:42:01"/>
+  <NAME value="99dan"/>
+  <PROPERTIES>
+    <BUILD>
+      <OUTPUTFILE value="99dan.exe"/>
+    </BUILD>
+    <VFS>
+      <lib value="">
+        <tcl8.5 value="">
+          <encoding value=""/>
+        </tcl8.5>
+        <app-unknown value=""/>
+      </lib>
+    </VFS>
+  </PROPERTIES>
+  <TYPE value="Console Application"/>
+  <SOURCES value="" main=""/>
+  <BREAKPOINTS value=""/>
+  <BOOKMARKS value=""/>
+</MYTCL>
