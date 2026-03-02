@@ -1,0 +1,35 @@
+[
+  {
+    "name": "SCL",
+    "pin": "D2",
+    "wave": "h.............................................lhlhlhlhlhlhlhlhlhlhlhlhlhlhlhlhlhlhlhlhl.hlhlhlhlhlhlhlh...lhlhlhlhlhlhlhlhlhlhlhlhlhlhlhlhlhlhlhlhlhlhlhlhlhlhl.hlh....................................."
+  },
+  {
+    "name": "SDA",
+    "pin": "D3",
+    "wave": "h............................................lh.l...h.l.h.....l.........h.l.h...l....h.l.h.l.......h.l.h.lh.l...h.l.h.....l.........h.l.h...l...h.l.h.l........h.l.h...................................."
+  },
+  {},
+  {
+    "name": "",
+    "wave": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx4x4.............xx4.4...............4.4................4.x4x4x4.............xx4.4...............4.4...............x4.x4xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+    "data": [
+      "Start",
+      "Address read: 4B",
+      "ACK",
+      "Data read: 0B",
+      "ACK",
+      "Data read: 50",
+      "NACK",
+      "Stop",
+      "Start",
+      "Address read: 4B",
+      "ACK",
+      "Data read: 0B",
+      "ACK",
+      "Data read: 50",
+      "NACK",
+      "Stop"
+    ]
+  }
+]

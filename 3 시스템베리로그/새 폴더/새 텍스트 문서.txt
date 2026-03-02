@@ -1,0 +1,43 @@
+module test;
+  bit clk=1, a, b, c;
+  
+  // write assertion below
+  assert property ($rose(a) ##[1:5] b |-> ##1 c) // 60 fail1 to satisfy all 3 cases
+  //assert property ( ##[0:3] b |-> ##1 c) // pass1: includes VS case w/vcs
+    $strobe($time, " pass1"); else $strobe($time, " fail1");
+  assert property (first_match($rose(a) ##[1:5] b) |-> ##1 c) 
+    $strobe($time, " pass2"); else $strobe($time, " fail2");
+
+  // write test sequence below for the signals, a, b, c, ...
+  string str_a = "01000000000";
+  string str_b = "00100001000";         
+  string str_c = "00010000100";
+
+  initial begin                         
+    fork
+      pattern_macro(str_a, a);
+      pattern_macro(str_b, b);
+      pattern_macro(str_c, c);
+    join
+    #50 $finish; 
+  end
+
+  task automatic pattern_macro (input string s, ref bit series);
+    logic char_s;
+    
+    for (int i = 0; i < s.len; i++) begin
+      char_s = s.getc(i);
+      series = @(negedge clk) char_s;  // using "negedge" of clk
+    end
+  endtask
+    
+  always #5 clk = ~clk;
+  // need default clocking definition for use of ##n outside assertion blocks
+  default clocking CB @(posedge clk); endclocking
+  
+  // to get waveform dumped
+  initial begin
+   	$dumpvars; $dumpfile("dump.vcd");
+  end
+  
+endmodule
