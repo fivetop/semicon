@@ -1,0 +1,155 @@
+source latency
+network latency
+skew 
+jitter
+SDC
+tech file 
+tlu file 
+mapping
+def
+sdc
+salf
+sdf
+spef
+WNS/TNS
+slack
+setup/holdtime 
+recovery / remove
+useful skew
+skew balancing 
+instantiation
+inference
+DC WLM/Topo
+uncertainty
+PVT
+check_time
+check_design
+link
+
+
+
+반갑습니다! 시놉시스(Synopsys)의 **Design Compiler(DC)**와 반도체 설계 흐름(Digital Design Flow)에서 사용되는 핵심 용어들을 정리해 드릴게요. 양이 꽤 많으니 성격에 따라 그룹화해서 설명하겠습니다.
+
+1. 지연 시간 및 타이밍 기초 (Latency & Timing)
+디지털 회로에서 신호가 전달되는 시간과 관련된 용어들입니다.
+
+Source Latency: 클럭 소스(Clock Source)에서 디자인의 클럭 정의 지점까지의 지연 시간.
+
+Network Latency: 클럭 정의 지점부터 실제 Flip-Flop의 클럭 핀까지 전달되는 지연 시간.
+
+Skew: 동일한 클럭이 서로 다른 레지스터에 도달할 때 발생하는 도착 시간 차이.
+
+Jitter: 클럭 주기가 미세하게 흔들리는 현상(불확실성).
+
+Setup Time: 데이터가 클럭 엣지보다 먼저 도착해 안정화되어야 하는 최소 시간.
+
+Hold Time: 클럭 엣지 이후 데이터가 일정 시간 동안 유지되어야 하는 최소 시간.
+
+Recovery / Removal: 비동기 신호(Reset 등)에 대한 Setup/Hold 개념.
+
+Recovery: Reset 해제 신호가 클럭 엣지 전 최소한 확보해야 하는 시간.
+
+Removal: 클럭 엣지 후 Reset 신호가 유지되어야 하는 최소 시간.
+
+Uncertainty: Skew와 Jitter 등을 고려하여 타이밍 분석 시 부여하는 여유분(Margin).
+
+2. 타이밍 분석 및 최적화 (Analysis & Optimization)
+설계가 목표 성능을 만족하는지 판단하는 지표들입니다.
+
+WNS (Worst Negative Slack): 전체 디자인에서 가장 나쁜(가장 큰 음수) Slack 값. 0보다 작으면 타이밍 위반입니다.
+
+TNS (Total Negative Slack): 디자인 내 모든 End-point에서 발생한 음수 Slack의 합계. 전체적인 설계 완성도를 나타냅니다.
+
+Slack: 요구되는 시간(Required time)과 실제 도착 시간(Arrival time)의 차이. 양수(+)여야 안전합니다.
+
+Useful Skew: 타이밍 위반을 해결하기 위해 의도적으로 특정 경로에 Skew를 주어 여유를 만드는 기법.
+
+Skew Balancing: 클럭이 모든 곳에 최대한 동시에 도달하도록 클럭 트리(CTS)를 조절하는 과정.
+
+3. 파일 형식 및 데이터 (File Formats)
+합성과 배치 배선(P&R) 과정에서 주고받는 표준 파일들입니다.
+
+SDC (Synopsys Design Constraints): 타이밍, 면적, 전력 소모 등 설계 제약 조건을 적은 표준 파일.
+
+DEF (Design Exchange Format): 칩의 물리적 레이아웃 정보(배치, 배선 등)를 담은 파일.
+
+SPEF (Standard Parasitic Exchange Format): 배선 후 발생하는 저항(R)과 커패시턴스(C) 성분을 기록한 파일.
+
+SDF (Standard Delay Format): 실제 게이트와 배선의 지연 시간 정보를 담은 파일 (시뮬레이션용).
+
+SAIF (Switching Activity Interchange Format): 전력 분석을 위해 신호의 토글 정보(움직임)를 기록한 파일.
+
+Tech File / TLU+ File: 공정 라이브러리의 물리적 특성 및 RC 값을 계산하기 위한 모델 파일.
+
+4. 합성 프로세스 및 명령어 (Synthesis & Commands)
+Design Compiler 내부 동작과 관련된 용어입니다.
+
+Instantiation: 하위 모듈을 명시적으로 불러와서 연결하는 것 (직접 소환).
+
+Inference: HDL 코드의 논리 구조(if, case 등)를 보고 DC가 적절한 하드웨어(Mux, Flip-flop 등)를 자동으로 유추해 생성하는 것.
+
+DC WLM (Wire Load Model): 배선 길이를 통계적으로 예측하여 타이밍을 계산하는 방식 (과거 방식).
+
+DC Topo (Topographical Mode): 실제 물리적인 배치를 고려하여 타이밍을 더 정확하게 예측하는 합성 방식 (현재 주력).
+
+Mapping: 최적화된 논리 회로를 특정 공정의 라이브러리(Standard Cell)로 변환하는 과정.
+
+Link: 설계된 디자인과 사용된 라이브러리들을 서로 연결하여 참조 관계를 확인하는 작업.
+
+check_design: 디자인에 Floating 핀이나 연결 오류가 없는지 확인하는 명령어.
+
+check_time: 타이밍 제약 조건이 누락되었거나 분석 불가능한 경로가 있는지 확인하는 명령어.
+
+5. 기타
+PVT (Process, Voltage, Temperature): 반도체 동작 환경의 3요소. 이 조건에 따라 칩의 속도가 변하므로 최악/최선의 상황을 모두 시뮬레이션해야 합니다.
+
+설명이 더 필요한 특정 용어가 있나요? 예를 들어 **"Setup/Hold Time 위반 시 해결 방법"**이나 "SDC 파일 작성법" 등에 대해 더 자세히 알려드릴 수 있습니다.
+
+
+
+-------------------
+
+
+
+**Setup Time**과 **Hold Time** 위반(Violation)은 칩이 정상적으로 동작하지 못하게 만드는 치명적인 오류입니다. 이를 해결하는 방식은 "데이터가 너무 늦게 오느냐(Setup)", "너무 빨리 변하느냐(Hold)"에 따라 정반대의 접근이 필요합니다.
+
+---
+
+## 1. Setup Time 위반 해결 (Data is too SLOW)
+
+Setup 위반은 데이터가 클럭 엣지가 오기 전까지 충분히 도착하지 못했을 때 발생합니다. 즉, **데이터 경로(Data Path)를 빠르게** 만들거나 **클럭을 늦게** 주어야 합니다.
+
+* **조합 논리 회로(Combinational Logic) 최적화:** * Logic Depth를 줄이거나, 더 빠른 Gate(High-Vt → Low-Vt 셀)로 교체합니다.
+* 중간에 파이프라인 레지스터를 추가하여 경로를 쪼갭니다.
+
+
+* **Net Delay 감소:** * 배선(Routing) 길이를 줄이거나, 구동력이 큰 버퍼(Buffer)를 추가하여 신호 전송 속도를 높입니다.
+* **클럭 주파수 하향:** * 가장 최후의 수단으로, 클럭 주기($T$)를 늘려 데이터가 도착할 시간을 벌어줍니다.
+* **Useful Skew 활용:** * 데이터를 받는 쪽의 클럭(Capture Clock)을 의도적으로 지연시켜 여유 시간을 확보합니다.
+
+---
+
+## 2. Hold Time 위반 해결 (Data is too FAST)
+
+Hold 위반은 새로운 데이터가 너무 빨리 들어와서 기존 데이터가 저장될 시간을 침범할 때 발생합니다. 즉, **데이터 경로를 강제로 늦춰야** 합니다.
+
+* **지연 소자(Delay Element/Buffer) 삽입:** * 데이터 경로에 버퍼를 추가하여 신호가 도달하는 시간을 늦춥니다. Setup 위반과 달리 로직을 수정하지 않고도 해결이 가능합니다.
+* **클럭 트리 수정:** * 데이터를 보내는 쪽의 클럭(Launch Clock)을 지연시키거나, 받는 쪽의 클럭을 앞당깁니다.
+* **주의사항:** * Hold를 잡으려고 버퍼를 너무 많이 넣으면 Setup 타임에 영향을 줄 수 있으므로, **Setup 마진이 충분한 곳**에서 작업해야 합니다.
+
+---
+
+## 3. 요약 및 비교
+
+| 구분 | 발생 원인 | 주요 해결 전략 |
+| --- | --- | --- |
+| **Setup Violation** | 데이터가 너무 느림 | 로직 최적화, 고성능 셀 교체, 파이프라인 추가 |
+| **Hold Violation** | 데이터가 너무 빠름 | **지연 버퍼(Delay Buffer) 삽입** |
+
+---
+
+### 실무 팁 (Synopsys DC 기준)
+
+Design Compiler나 IC Compiler에서 타이밍을 잡을 때, 보통 **Setup을 먼저** 잡고 나중에 **Hold를 해결**합니다. Setup은 로직 구조 자체를 바꿔야 할 수도 있는 무거운 작업인 반면, Hold는 배선 단계에서 버퍼만 끼워 넣어도 해결되는 경우가 많기 때문입니다.
+
+더 구체적인 타이밍 분석 리포트(report_timing) 해석 방법이 궁금하신가요? 혹은 특정 위반 사례에 대한 해결책이 필요하신가요?
