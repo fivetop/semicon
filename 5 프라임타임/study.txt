@@ -1,0 +1,60 @@
+시놉시스(Synopsys)의 정적 타이밍 분석(STA) 도구인 프라임타임(PrimeTime)에서 'Untested(미검증/테스트되지 않은)'는 타이밍 해석 대상에서 제외되거나, 타이밍 경로가 형성되지 않아 분석할 수 없는 경로를 의미합니다. 주로 report_timing 등에서 발견되는 Untested 항목의 주요 종류는 다음과 같습니다. 
+PrimeTime에서 Untested 종류 (Untested Timing Check)
+False Paths (false_paths):
+사용자가 의도적으로 타이밍 분석에서 제외하도록 설정한 경로입니다. 실제 동작에서 타이밍이 중요하지 않거나, 다른 도메인 간의 연결 등 물리적으로 분석이 불필요한 경우입니다.
+User Disabled / Disabled Arcs (user disabled):
+set_disable_timing 명령 등을 통해 특정 셀의 입력-출력 핀 사이의 타이밍 아크(Timing Arc)를 비활성화한 경우입니다. 이 경로를 통해 신호가 전달되어도 PrimeTime은 이를 계산하지 않습니다.
+Constant Disabled / Constant Propagation (constant_disabled):
+특정 핀이 상수(Constant, 0 또는 1)로 고정되어 있어, 해당 핀을 통과하는 경로가 비활성화된 경우입니다. 핀이 고정되어 있으면 신호가 변경되지 않아 타이밍 분석이 불가능합니다.
+No Paths (no_paths):
+시작점(Startpoint)과 끝점(Endpoint) 사이의 물리적인 경로가 존재하지 않거나, 제약 조건(SDC)이 누락되어 타이밍 계산이 이루어지지 않는 경우입니다.
+Generated Clock Issues:
+마스터 클록(Master Clock)이 정의되지 않았거나 정의가 잘못되어 Generated Clock(생성된 클록)을 기반으로 한 경로가 분석되지 않는 경우입니다. 
+Scribd
+Scribd
+ +1
+Untested의 영향 및 대처
+Signoff 무결성: 설계자는 이러한 Untested 경로가 실제 기능상으로 정말 무시해도 되는지(false_path가 올바른지) 확인해야 합니다.
+분석 오류: 의도치 않게 경로가 Untested로 나타나면, 칩이 최종 테이프아웃(Tapeout) 후 실제 환경에서 속도 위반(Timing Violation)을 일으킬 수 있습니다.
+확인 방법: report_timing -significant_digits 3이나 report_timing_exceptions 같은 명령을 통해 어떤 제약 조건이 Untested를 유발했는지 식별할 수 있습니다. 
+
+
+
+
+pt_shell Tcl script syntax checker가 필요하면
+아래처럼 각자 ~/bin 아래에 스크립트를 만들어서 사용하면 됩니다.
+
+
+1. ~/bin/ptprocheck 생성 후 아래 내용 저장
+ 
+#!/bin/sh
+ 
+synopsys_root=/tools/synopsys/pts/L-2016.06-SP2
+
+platform=linux64
+
+exec_name="${synopsys_root}/${platform}/tcl/bin/snps_checker_exec"
+
+tcllib="${synopsys_root}/auxx/tcllib"
+ 
+export synopsys_root
+ 
+exec "${exec_name}" "${tcllib}/snps_tcl/snps_checker/snps_checker.tbc" \
+
+  -pcx "${synopsys_root}/auxx/tcllib/snps_tcl" \
+
+  -pcx "${synopsys_root}/auxx/tcllib/primetime" \
+
+  -use snpsTcl1.0 -use primetime1.0 "$@"
+ 
+2. 실행 권한 부여
+
+chmod 755 ~/bin/ptprocheck
+ 
+3. 사용 예
+
+~/bin/ptprocheck test.tcl
+ 
+이정욱 (게스트) 님이 모임에 초대되었습니다.
+
+ 
