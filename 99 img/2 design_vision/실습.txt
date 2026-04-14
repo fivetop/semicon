@@ -1,0 +1,208 @@
+ 1  source ./.synopsys_dc.setup
+     2  list_lib
+     3  source ./0_Script/2b_run_syn_read_verilog
+     4  ls
+     5  list_lib
+     6  start_gui
+     7  get_cells
+     8  get_cells --help
+     9  ref_name =~ NBUFFX4_RVTfilter  I*get_cells
+    10  get_cells *clk*
+    11  get_cells *CLK*
+    12  get_cells *?CLK"
+    13  get_cells "*?CLK"
+    14  get_cells "*4"
+    15  get_cells *4*Q
+    16  get_cells *4*Q*
+    17  set netsel [get_nets buf*]
+    18  get_cells -of_object $netsel
+    19  get_designs
+    20  get_designs SDRAM*
+    21  get_libs
+    22  `get_nets
+    23  get_net
+    24  get_nets
+    25  get_net
+    26  get_pins
+    27  get_pin
+    28  get_clock
+    29  get_clocks
+    30  get_clocks *
+    31  get_nets I_ORS
+    32  get_nets I_ORA*
+    33  get_nets "I_ORA*"
+    34  get_nets "ORA*"
+    35  get_nets *
+    36  get_nets
+    37  get_nets I*/*
+    38  get_nets */*
+    39  get_nets */*/*
+    40  set csel [get_cells I_CLK&]
+    41  set csel [get_cells I_CLK*]
+    42  get_pins -of_objects $csel
+    43  get_pins -of [get_nets -of_,, [get_cells *CLK*]]
+    44  get_pins -of [get_nets -of_object [get_cells *CLK*]]
+    45  get_ports
+    46  get_port
+    47  get_pin
+    48  get_ports sd*
+    49  get_ports sd* -filter @port_direction == in}
+    50  get_ports sd* -filter {@port_direction == in}
+    51  get_ports sd* -filter {@port_direction == out}
+    52  report_ports
+    53  report_ports *
+    54  report_ports [get_port *]
+    55  report_port [get_port *]
+    56  report_report_area
+    57  report_area
+    58  report_clock
+    59  report_clocks
+    60  report_clock
+    61  get_users
+    62  list_user
+    63  list_users
+    64  re
+    65  report_lib
+    66  report_lib *
+    67  report_libs
+    68  report_lib --help
+    69  man report_lib
+    70  report_libs -all
+    71  report_lib -all
+    72  gui_start
+    73  uplevel #0 { report_cell }
+    74  change_selection [::snpsGuiSyn::get_leaf_cells_of_selected_cells]
+    75  uplevel #0 { report_cell }
+    76  ls
+    77  source ./0_Script/4_run_syn_constraints
+    78  create_clock [get_ports pclk]  -period 8  -waveform {0 4}
+    79  create_clock [get_ports pclk]  -period 8  -waveform {0 4}
+    80  get_ports pclk
+    81  get_ports {pclk}
+    82  get_ports pclk
+    83  create_clock [get_pins pclk]  -period 8  -waveform {0 4}
+    84  create_clock [get_nets pclk]  -period 8  -waveform {0 4}
+    85  get_nets pclk
+    86  create_clock [get_ports pclk]  -period 8  -waveform {0 4}
+    87  create_clock [get_ports sys_clk]  -period 4  -waveform {0 2}
+    88  create_clock [get_ports sdr_clk]  -period 4  -waveform {0 2}
+    89  create_clock  -name PCI_CLK -period 8 -waveform {0 4} [get_pins I_CLOCK_GEN/I_PLL_PCI/CLK_1X]
+    90  create_clock  -name SDRAM_CLK -period 4 -waveform {0 2}  [get_pins I_CLOCK_GEN/I_PLL_SD/CLK_1X]
+    91  create_clock  -name SDRAM_CLK -period 4 -waveform {0 2}  [get_pins I_CLOCK_GEN/I_PLL_SD/CLK_1X]
+    92  report clock
+    93  report clocks
+    94  report_clock
+    95  report clock
+    96  report_clock
+    97  report_
+    98  report_clocks
+    99  remove -all
+   100  remove_clock -all
+   101  report_clocks
+   102  source ./0_Script/4_run_syn_constraints
+   103  report_clocks
+   104  create_clock [get_ports pclk1]  -period 8  -waveform {0 4}
+   105  create_clock  -name SDRAM_CLK1 -period 4 -waveform {0 2}  [get_pins I_CLOCK_GEN/I_PLL_SD/CLK_1X]
+   106  report_clocks
+   107  remove_clock SDRAM_CLK1
+   108  report_clocks
+   109  source ./0_Script/4_run_syn_constraints
+   110  report_clocks
+   111  start_gui
+   112  start_gui
+   113  uplevel #0 { report_clock -attribute }
+   114  set_clock_uncertainty -setup 0.3 [get_clocks pclk]
+   115  report_clocks
+   116  report_clocks -skew
+   117  sh gvim xterm&
+   118  sh sterm
+   119  sh xterm
+   120  sh xterm &
+   121  sh gvim dc.com &
+   122  history
+   123  history > a.txt
+   124  ls
+   125  gvim a.txt
+   126  jobs
+   127  sh jobs
+   128  sh jobs
+   129  set pci_io_ports
+   130  set pci_io_ports [get_ports p*]
+   131  set pci_io_ports [get_ports p* -filter "port_direction==inout"]
+   132  set pci_io_ports [add_to_cillection [get_ports "pidsel pgnt_n_ pm66"] $pci_io_ports]
+   133  set pci_io_ports [add_to_cillection [get_ports "pidsel pgnt_n pm66"] $pci_io_ports]
+   134  set pci_io_ports [add_to_collection [get_ports "pidsel pgnt_n pm66"] $pci_io_ports]
+   135  gui_start
+   136  change_selection [get_ports *]
+   137  set_input_delay 6.0 -max -clock PCI_CLK -add_delay $pci_in_ports
+   138  set_input_delay 2.0 -min -clock PCI_CLK -add_delay $pci_in_ports
+   139  set_input_delay 0.800 -max  -clock SDRAM_CLK -add_delay $sd_io_ddr_ports
+   140  set_input_delay 0.800 -max  -clock SDRAM_CLK -clock_fall -add_delay $sd_io_ddr_ports
+   141  set_input_delay 0.200 -min  -clock SDRAM_CLK -add_delay $sd_io_ddr_ports
+   142  set_input_delay 0.200 -min  -clock SDRAM_CLK -clock_fall -add_delay $sd_io_ddr_ports
+   143  set_input_delay 4.0 -max -clock PCI_CLK [get_ports "scan_en power_save"]
+   144  set_input_delay 2.0 -min -clock PCI_CLK [get_ports "scan_en power_save"]
+   145  set_input_delay 6.0 -max -clock PCI_CLK -add_delay $pci_in_ports
+   146  set_input_delay 2.0 -min -clock PCI_CLK -add_delay $pci_in_ports
+   147  set_input_delay 0.800 -max  -clock SDRAM_CLK -add_delay $sd_io_ddr_ports
+   148  set_input_delay 0.800 -max  -clock SDRAM_CLK -clock_fall -add_delay $sd_io_ddr_ports
+   149  set_input_delay 0.200 -min  -clock SDRAM_CLK -add_delay $sd_io_ddr_ports
+   150  set_input_delay 0.200 -min  -clock SDRAM_CLK -clock_fall -add_delay $sd_io_ddr_ports
+   151  set_input_delay 4.0 -max -clock PCI_CLK [get_ports "scan_en power_save"]
+   152  set_input_delay 2.0 -min -clock PCI_CLK [get_ports "scan_en power_save"]
+   153  set pci_io_ports [get_ports p* -filter "port_direction==inout"]
+   154  set pci_in_ports [add_to_collection [get_ports "pidsel pgnt_n pm66en"] $pci_io_ports]
+   155  set pci_out_ports [add_to_collection [get_ports "preq_n"] $pci_io_ports]
+   156  set pci_ports [add_to_collection $pci_io_ports [get_ports "pidsel pgnt_n pm66en preq_n"]]
+   157  set sd_io_ddr_ports [get_ports "sd_DQ*"]
+   158  set sd_out_ports [remove_from_collection [get_ports sd_*] [add_to_collection $sd_io_ddr_ports [get_ports "sd_CK sd_CKn"]]]
+   159  set sd_ports [add_to_collection $sd_io_ddr_ports $sd_out_ports]
+   160  set all_I0_mux_pins [get_pins I_ORCA_TOP/I_SDRAM_IF/*sd_mux_dq_out/A1]
+   161  set all_I1_mux_pins [get_pins I_ORCA_TOP/I_SDRAM_IF/*sd_mux_dq_out/A2]
+   162  set_clock_uncertainty -setup 0.3 [get_clocks pclk]
+   163  set_clock_uncertainty -setup 0.3 [get_clocks sys_clk]
+   164  set_clock_uncertainty -setup 0.3 [get_clocks sdr_clk]
+   165  set_clock_uncertainty -setup 0.3  [get_clocks PCI_CLK]
+   166  set_clock_uncertainty -setup 0.3  [get_clocks SDRAM_CLK]
+   167  set_clock_uncertainty -setup 0.3  [get_clocks SD_DDR_CLK]
+   168  set_clock_uncertainty -setup 0.3  [get_clocks SYS_CLK]
+   169  set_clock_uncertainty -setup 0.4  [get_clocks SYS_2x_CLK]
+   170  set_case_analysis 0 [get_ports scan_en]
+   171  set_case_analysis 0 [get_ports power_save]
+   172  set_case_analysis 1 [get_ports pm66en]
+   173  set_case_analysis 0 [get_ports scan_en]
+   174  set_case_analysis 0 [get_ports power_save]
+   175  set_case_analysis 1 [get_ports pm66en]
+   176  report_clock
+   177  report_clock -skew
+   178  report_port $sd_io_ddr_ports
+   179  report_port $sd_io_ddr_ports -verbose
+   180  report_port $pci_out_ports -verbose
+   181  set_load 15 $pci_ports
+   182  set_load 20 $sd_ports
+   183  set_load 5 [get_ports "sd_CK sd_CKn"]
+   184  set_load 10 [get_ports "scan_en test_mode power_save"]
+   185  set_load 10 [all_outputs]
+   186  report_port [get_ports "sd_CK sd_CKn"] -verbose
+   187  set_input_transition 0.500 [all_inputs]
+   188  set_input_transition 1.000 $pci_in_ports
+   189  report_port $pci_in_ports -verbose
+   190  set_clock_gating_check -low -setup 0.200 -hold 0.100 $all_I0_mux_pins
+   191  set_clock_gating_check -high -setup 0.200 -hold 0.100 $all_I1_mux_pins
+   192  set_clock_gating_check -setup 0.200 -hold 0.100 [get_clocks SYS_CLK]
+   193  report_clock_gating_check $all_IO_mux_pin
+   194  report_clock_gating_check $all_IO_mux_pin
+   195  report_clock_gating_check
+   196  set_false_path -from [get_clocks SYS_CLK] -to [get_clocks {PCI_CLK SDRAM_CLK SD_DDR_CLK}]
+   197  set_false_path -from [get_clocks SYS_2x_CLK] -to [get_clocks {PCI_CLK SDRAM_CLK SD_DDR_CLK}]
+   198  set_false_path -from [get_clocks PCI_CLK] -to [get_clocks {SYS_CLK SYS_2x_CLK SDRAM_CLK SD_DDR_CLK}]
+   199  set_false_path -from [get_clocks SDRAM_CLK] -to [get_clocks {SYS_CLK SYS_2x_CLK PCI_CLK}]
+   200  set_false_path -from [get_clocks SD_DDR_CLK] -to [get_clocks {SYS_CLK SYS_2x_CLK PCI_CLK}]
+   201  report_timing -from *
+   202  report_timing -from [get_clocks SYS_CLK] -to [get_clocks PCI+~_CLK]
+   203  report_timing -from [get_clocks SYS_CLK] -to [get_clocks PCI_CLK]
+   204  set_multicycle_path -setup 2 -end -from [get_clocks sdr_clk] -to [get_clocks SD_DDR_CLK]
+   205  set_multicycle_path -hold 1  -end -from [get_clocks sdr_clk] -to [get_clocks SD_DDR_CLK]
+   206  set_multicycle_path -setup 2 -end -from [get_clocks SDRAM_CLK] -to [get_clocks SD_DDR_CLK]
+   207  set_multicycle_path -hold 1  -end -from [get_clocks SDRAM_CLK] -to [get_clocks SD_DDR_CLK]
+   208  report_timing_requirements
