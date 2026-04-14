@@ -1,0 +1,390 @@
+ORCA RTL 계층화 전략 및 가이드
+
+==============================================================================
+1. 현재 구조의 문제점
+==============================================================================
+
+현재 ORCA_TOP에서 모든 모듈(31개)을 직접 인스턴스화:
+- ORCA_TOP이 너무 많은 신호와 논리를 직접 관리
+- 설계 복잡도 증가 → 버그 발생 확률 증가
+- 부분 수정 시 전체에 영향
+- 테스트/검증이 어려움
+- 재사용성 낮음
+
+==============================================================================
+2. 제안하는 계층화 구조
+==============================================================================
+
+2.1 레벨 0: ORCA (최상위)
+┌─────────────────────────────────────────────────────┐
+│               ORCA (Top)                            │
+└─────────────────────────────────────────────────────┘
+
+2.2 레벨 1: 주요 서브블럭 (4개)
+
+ORCA_TOP
+├─ RISC_SUBSYSTEM (RISC_SYS)
+├─ MEMORY_SUBSYSTEM (MEM_SYS)
+├─ ACCELERATOR_SUBSYSTEM (ACCEL_SYS)
+└─ CLOCK_POWER_SUBSYSTEM (CLK_PWR_SYS)
+
+2.3 레벨 2-3: 각 서브블럭 내부 계층
+
+1) RISC_SUBSYSTEM
+   ├─ PROGRAM_COUNTER_BLOCK (프로그램 카운터 + FSM)
+   ├─ INSTRUCTION_FETCH_BLOCK (명령어 래치)
+   ├─ EXECUTION_BLOCK (CONTROL, DATA_PATH, ALU)
+   └─ REGISTER_BLOCK (REG_FILE)
+
+2) MEMORY_SUBSYSTEM
+   ├─ PCI_INTERFACE_BLOCK
+   │  ├─ PCI_CORE
+   │  ├─ PCI_FIFO_READ
+   │  ├─ PCI_FIFO_WRITE
+   │  └─ PCI_DATA_MUX
+   │
+   ├─ SDRAM_INTERFACE_BLOCK
+   │  ├─ SDRAM_CORE
+   │  ├─ SDRAM_FIFO_READ
+   │  ├─ SDRAM_FIFO_WRITE
+   │  └─ SDRAM_DATA_MUX
+   │
+   └─ STACK_BLOCK
+      ├─ STACK_CONTROL
+      └─ STACK_MEMORY
+
+3) ACCELERATOR_SUBSYSTEM
+   ├─ PARSER_CONTROL_BLOCK
+   ├─ BLENDER_UNIT_BLOCK
+   └─ CONTEXT_MEMORY_BLOCK
+
+4) CLOCK_POWER_SUBSYSTEM
+   ├─ CLOCK_GENERATION_BLOCK
+   ├─ RESET_CONTROL_BLOCK
+   └─ POWER_DISTRIBUTION_BLOCK
+
+==============================================================================
+3. 각 서브블럭의 신규 모듈 구성 (Wrapper 모듈)
+==============================================================================
+
+3.1 RISC_SUBSYSTEM (risc_subsystem.v) NEW
+역할: RISC 코어의 5-단계 파이프라인 통합
+입력:
+- 시스템 클록, 리셋
+- 메모리 인터페이스 신호
+
+내부:
+- PRGRM_CNT_TOP
+- INSTRN_LAT
+- CONTROL
+- DATA_PATH
+- ALU
+- REG_FILE
+
+출력:
+- 명령어 데이터 (Crnt_Instrn)
+- 데이터 경로 출력 (Op_Result, Flags)
+
+3.2 PCI_INTERFACE_BLOCK (pci_interface.v) NEW
+역할: PCI 통신 관리
+입력:
+- pclk(66MHz), pci_rst_n
+- PCI 버스 신호 (pad_in, pad_out, 제어 신호)
+
+내부:
+- PCI_CORE
+- PCI_RFIFO / PCI_WFIFO
+- PCI_W_MUX
+
+출력:
+- 32-bit 읽기 데이터 (to RISC/Blender)
+- 32-bit 쓰기 데이터 요청 (from RISC/Blender)
+
+3.3 SDRAM_INTERFACE_BLOCK (sdram_interface.v) NEW
+역할: SDRAM 메모리 액세스 관리
+입력:
+- sdram_clk, sdram_rst_n
+- SDRAM 신호 (주소, 데이터, 제어)
+
+내부:
+- SDRAM_IF
+- SDRAM_RFIFO / SDRAM_WFIFO
+- SD_W_MUX
+
+출력:
+- 32-bit 읽기 데이터 (to PCI/RISC)
+- 32-bit 쓰기 데이터 (from PCI/RISC)
+
+3.4 BLENDER_SUBSYSTEM (blender_subsystem.v) NEW
+역할: 멀티미디어 가속
+입력:
+- sys_clk, rst_n
+- 32-bit operand 1/2
+- 4-bit operation code (from Parser)
+
+내부:
+- BLENDER (3-stage pipeline)
+- PARSER_CONTROL
+- CONTEXT_MEMORY
+
+출력:
+- 32-bit result
+- operation complete
+
+3.5 CLOCK_POWER_SUBSYSTEM (clk_pwr_subsystem.v) NEW
+역할: 클록 생성, 리셋, 전원 분배
+입력:
+- 외부 클록들 (pclk, sdram_clk, sys_clk)
+- 제어 신호 (test_mode, powersave)
+
+내부:
+- CLOCK_GEN
+- CLKMUL
+- RESET_BLOCK
+- IOPOWER
+
+출력:
+- 내부 클록들
+- 리셋 신호들
+- 전원 네트
+
+==============================================================================
+4. NEW ORCA_TOP 구조
+==============================================================================
+
+module ORCA_TOP (
+  // 외부 클록 입력
+  input sys_clk, sdram_clk, pclk,
+  
+  // 리셋
+  input sys_rst_n, sdram_rst_n, pci_rst_n,
+  
+  // PCI Interface
+  input [15:0] pad_in,
+  output [15:0] pad_out,
+  // ... other PCI signals
+  
+  // SDRAM Interface
+  input [15:0] sd_dq_in,
+  output [15:0] sd_dq_out,
+  // ... other SDRAM signals
+  
+  // 테스트 신호
+  input test_mode, scan_en, powersave
+);
+
+  // 내부 클록 신호
+  wire clk_sys_int, clk_sys2x, clk_pci_int, clk_sdram_int;
+  wire rst_sys, rst_pci, rst_sdram;
+  
+  // RISC 출력
+  wire [31:0] risc_instrn;
+  wire [15:0] risc_data_out;
+  wire risc_data_valid;
+  
+  // 메모리 인터페이스 신호
+  wire [31:0] pci_read_data, sdram_read_data;
+  wire [31:0] pci_write_data, sdram_write_data;
+  
+  // Blender 출력
+  wire [31:0] blender_result;
+  wire blender_done;
+  
+  //========== 서브블럭 인스턴싱 ==========
+  
+  // 1. CLK & POWER SUBSYSTEM (최우선)
+  clk_pwr_subsystem CLK_PWR_INST (
+    .sys_clk(sys_clk),
+    .pclk(pclk),
+    .sdram_clk(sdram_clk),
+    .test_mode(test_mode),
+    .powersave(powersave),
+    .clk_sys_out(clk_sys_int),
+    .clk_sys2x_out(clk_sys2x),
+    .clk_pci_out(clk_pci_int),
+    .clk_sdram_out(clk_sdram_int),
+    .rst_sys_out(rst_sys),
+    .rst_pci_out(rst_pci),
+    .rst_sdram_out(rst_sdram)
+  );
+  
+  // 2. PCI INTERFACE SUBSYSTEM
+  pci_interface PCI_INST (
+    .clk(clk_pci_int),
+    .rst_n(rst_pci),
+    .pad_in(pad_in),
+    .pad_out(pad_out),
+    // ... other PCI signals
+    .read_data_out(pci_read_data),
+    .write_data_in(pci_write_data)
+  );
+  
+  // 3. SDRAM INTERFACE SUBSYSTEM
+  sdram_interface SDRAM_INST (
+    .clk(clk_sdram_int),
+    .rst_n(rst_sdram),
+    .sd_dq_in(sd_dq_in),
+    .sd_dq_out(sd_dq_out),
+    // ... other SDRAM signals
+    .read_data_out(sdram_read_data),
+    .write_data_in(sdram_write_data)
+  );
+  
+  // 4. ACCELERATOR SUBSYSTEM
+  blender_subsystem BLENDER_INST (
+    .clk(clk_sys_int),
+    .clk2x(clk_sys2x),
+    .rst_n(rst_sys),
+    .scan_en(scan_en),
+    .test_mode(test_mode),
+    .pci_data(pci_read_data),
+    .sdram_data(sdram_read_data),
+    .result(blender_result),
+    .done(blender_done)
+  );
+  
+  // 5. RISC SUBSYSTEM (중심 처리)
+  risc_subsystem RISC_INST (
+    .clk(clk_sys_int),
+    .clk2x(clk_sys2x),
+    .rst_n(rst_sys),
+    .scan_en(scan_en),
+    .instrn(risc_instrn),
+    .pci_data(pci_read_data),
+    .sdram_data(sdram_read_data),
+    .blender_data(blender_result),
+    .data_out(risc_data_out),
+    .data_valid(risc_data_valid)
+  );
+  
+  // 신호 연결 (멀티플렉싱)
+  assign pci_write_data = (select_risc) ? risc_data_out : blender_result;
+  assign sdram_write_data = (select_risc) ? risc_data_out : pci_read_data;
+  
+endmodule
+
+==============================================================================
+5. 계층화의 이점 (Why It's Better)
+==============================================================================
+
+5.1 설계 복잡도 감소
+✓ ORCA_TOP: 31개 모듈 → 5개 서브블럭으로 축소
+✓ 신호 연결 단순화: 100+ 신호 → ~30 신호로 감소
+✓ 설계자 인지 부하 감소 → 버그 감소
+
+5.2 모듈성 및 재사용성 증대
+✓ PCI_INTERFACE_BLOCK: 다른 프로젝트에서 재사용 가능
+✓ SDRAM_INTERFACE_BLOCK: 다른 메모리 시스템에 적용
+✓ RISC_SUBSYSTEM: 독립적인 프로세서로 활용
+✓ BLENDER_SUBSYSTEM: 멀티미디어 엔진으로 따로 사용
+
+5.3 검증 용이성 (Verification)
+✓ Sub-block 단위 단위 테스트 가능
+✓ UVM/SVA 기반 검증:
+  - pci_interface_block_tb.sv
+  - risc_subsystem_tb.sv
+  - integration_tb.sv (전체)
+✓ 병렬 검증 가능 → 검증 시간 단축
+
+5.4 합성 및 성능 최적화
+✓ Sub-block 별 독립적 합성 가능
+✓ Hierarchical 합성으로 컴파일 시간 단축
+✓ Sub-block 별 timing closure 가능
+✓ 클록 도메인 별 최적화 (sys_clk vs pclk vs sdram_clk)
+
+5.5 전력 관리 최적화
+✓ Sub-block 별 clock gating 독립 제어
+✓ PCI, SDRAM 미사용 시 분리 전원 관리
+✓ 누설 전류 최소화
+
+5.6 설계 유지보수
+✓ 버그 수정 범위 제한
+✓ 설계 변경 영향도 분석 용이
+✓ 설계 리뷰 간단화
+
+5.7 설계 문서화 개선
+✓ 각 블록의 역할이 명확
+✓ 인터페이스 정의가 명확
+✓ 아키텍처 이해 용이
+
+5.8 클록 도메인 관리
+✓ 3개 클록 도메인을 명시적으로 분리
+✓ CDC(Clock Domain Crossing) 문제 국지화
+✓ CDC 검증 용이 (CDC 체커 도구 적용)
+
+5.9 테스트 용이성
+✓ Scan Chain 관리 간단해짐
+✓ DFT 규칙 적용 단순화
+✓ Debug 포트 추가 용이
+
+5.10 성능 분석
+✓ Critical path 분석 명확
+✓ 병목(Bottleneck) 지점 파악 용이
+✓ 최적화 대상 명확
+
+==============================================================================
+6. 구현 로드맵
+==============================================================================
+
+Phase 1: 새 계층 구조 설계 (1-2주)
+- 각 서브블럭 인터페이스 정의
+- Wrapper 모듈 뼈대 작성
+- 신호 정의
+
+Phase 2: Wrapper 모듈 개발 (2-3주)
+- clk_pwr_subsystem.v 구현
+- pci_interface.v 구현
+- sdram_interface.v 구현
+- blender_subsystem.v 구현
+- risc_subsystem.v 구현
+
+Phase 3: 통합 및 검증 (2-3주)
+- NEW ORCA_TOP.v 작성
+- Behavioral Simulation 검증
+- Sub-block 기능 검증
+
+Phase 4: 합성 및 P&R (3-4주)
+- 각 블록 합성
+- Hierarchical P&R
+- Timing Closure
+
+==============================================================================
+7. 신규 파일 구조
+==============================================================================
+
+ORCA/2_Synthesis/1_Input/RTL/
+├─ ORCA.v (수정 필요 →  Top은 NEW ORCA_TOP으로 변경)
+├─ ORCA_TOP.v (기존 - 참고용)
+├─ NEW ORCA_TOP.v (신규 - 계층화된 최상위)
+│
+├─ risc_subsystem.v (신규 - Wrapper)
+├─ pci_interface.v (신규 - Wrapper)
+├─ sdram_interface.v (신규 - Wrapper)
+├─ blender_subsystem.v (신규 - Wrapper)
+├─ clk_pwr_subsystem.v (신규 - Wrapper)
+│
+├─ 기존 모듈들 (RISC_CORE.v, ALU.v, ... 등은 그대로)
+│
+└─ 테스트벤치/
+   ├─ risc_subsystem_tb.v (신규)
+   ├─ pci_interface_tb.v (신규)
+   ├─ sdram_interface_tb.v (신규)
+   └─ orca_tb.v (통합 테스트)
+
+==============================================================================
+8. Design Rule 추가
+==============================================================================
+
+- 각 Wrapper 모듈은 1개 클록 도메인만 담당
+- Sub-block 간 신호는 CDC (Clock Domain Crossing) 룰 준수
+- CDC 신호는 비동기 FIFO (Gray 코드) 사용
+- 각 블록의 리셋은 독립적 처리
+- Scan Chain은 리셋별로 별도 구성
+
+==============================================================================
+
+결론: 계층화 구조는 복잡한 설계를 체계적으로 관리하고,
+검증, 합성, 유지보수 효율성을 획기적으로 향상시킵니다.
+
+특히 멀티클럭, 멀티인터페이스인 ORCA 설계에서는
+계층화가 거의 필수적입니다.

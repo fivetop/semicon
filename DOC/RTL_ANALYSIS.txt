@@ -1,0 +1,185 @@
+ORCA RTL Design 분석 문서
+
+[1] 최상위 설계 파일
+================
+ORCA.v / ORCA_TOP.v
+- Top-level 모듈로 전체 시스템을 통합
+- 매개변수: sd_a_width(10), sd_dq_width(16), pci_data_width(16) 등
+- 주요 I/O: 시스템 클록(sys_clk, sys_2x_clk), SDRAM 클록, PCI 인터페이스
+- 내부: RISC 코어, PCI, SDRAM 인터페이스, parser 등을 인스턴스화
+
+[2] RISC 프로세서 코어 서브시스템
+==================================
+RISC_CORE.v
+- RISC 프로세서 실제 구현 모듈
+- 명령어 실행 및 데이터 처리 담당
+
+CONTROL.v
+- 제어 유닛 (Control Unit)
+- 현재 명령어 해석, 상태 관리
+- 입력: 명령어(Crnt_Instrn), 플래그(ALU_Flag들)
+- 출력: 다양한 제어 신호(Latch_Instr, Rd_Oprnd_A/B, Write_RegC 등)
+- 플래그: Neg_Flag, Carry_Flag, Zro_Flag 기반 조건부 제어
+
+DATA_PATH.v
+- 데이터 경로 모듈
+- 레지스터와 ALU 사이의 데이터 흐름 제어
+- 입력: 명령어, 레지스터 데이터, ALU 결과, 플래그
+- 출력: ALU 오퍼랜드(Oprnd_A/B), 결과(Op_Result)
+
+ALU.v (산술논리 유닛)
+- 16비트 연산 수행
+- 입력: 두 개의 16비트 오퍼랜드(Oprnd_A/B), 연산 코드(ALU_OP[5:0])
+- 출력: 16비트 결과, 플래그(Zero, Negative, Carry)
+- 지원 연산: add, sub, and, or, xor, shift 등
+
+REG_FILE.v
+- 레지스터 파일 (Register File)
+- 3개 포트: Read A, Read B, Write C
+- 주소: Addr_A/B/C (7비트)
+- 데이터 폭: 16비트
+
+[3] 명령어 처리 서브시스템
+============================
+INSTRN_LAT.v
+- 명령어 래치 (Instruction Latch)
+- 32비트 명령어 저장, 2개 출력(Crnt_Instrn_1/2)
+
+PRGRM_CNT_TOP.v
+- Program Counter Top-level 모듈
+- 내부: FSM(PRGRM_FSM), 디코더(PRGRM_DECODE), PC(PRGRM_CNT) 포함
+
+PRGRM_FSM.v (Program FSM)
+- 상태: RESET_STATE(0) → FETCH_INSTR(1) → READ_OPS(2) → EXECUTE(3) → WRITEBACK(4) → FETCH_INSTR
+- 5-단계 파이프라인 제어
+
+PRGRM_DECODE.v
+- 분기 명령어 디코더
+- 입력: 명령어, 플래그, 현재 상태
+- 출력: PC 제어 신호 (Incrmnt_PC, Ld_Brnch_Addr, Ld_Rtn_Addr)
+- 조건부 분기(Jump on Flag) 지원
+
+PRGRM_CNT.v
+- 8비트 Program Counter 레지스터
+- 기능: 증가, 분기 주소 로드, 리턴 주소 로드
+
+[4] 스택 메모리 서브시스템
+============================
+STACK_TOP.v
+- Stack 최상위 모듈
+
+STACK_FSM.v
+- Stack FSM (Finite State Machine)
+- 상태 기반 스택 동작 제어
+
+STACK_MEM.v
+- 스택 메모리 구현
+- Push/Pop 동작 지원
+
+[5] PCI (PCI Express/Mini-PCI) 인터페이스
+=============================================
+PCI_CORE.v
+- PCI 인터페이스 핵심 로직
+- 매개변수: pci_data_width(16비트)
+- 신호: pclk(66MHz), pidsel, pgnt_n, pframe_n, ptrdy_n, pdevsel_n 등
+- 양방향 데이터 경로(pad_in/pad_out)
+
+PCI_RFIFO.v (PCI Read FIFO)
+- PCI 읽기 FIFO (32비트, 깊이 32)
+- 비동기 Push/Pop 클록 지원
+- 상태 플래그: empty, almost_empty, half_full, almost_full, full, error
+
+PCI_WFIFO.v (PCI Write FIFO)
+- PCI 쓰기 FIFO (32비트, 깊이 32)
+- 읽기 FIFO와 동일 구조
+
+PCI_W_MUX.v
+- PCI 쓰기 데이터 멀티플렉서
+- 입력: Blender 데이터, SDRAM 읽기 데이터, RISC 결과 데이터
+- 선택: pci_w_select[1:0]에 따라 출력 선택
+
+[6] SDRAM 인터페이스
+=====================
+SDRAM_IF.v
+- SDRAM 인터페이스 모듈
+- 주소 폭: 10비트, 데이터 폭: 16비트
+- FIFO 구성: Read FIFO(깊이 64), Write FIFO(깊이 64)
+
+SDRAM_RFIFO.v
+- SDRAM 읽기 FIFO (32비트, 깊이 64)
+- PCI_RFIFO와 유사 기능
+
+SDRAM_WFIFO.v
+- SDRAM 쓰기 FIFO (32비트, 깊이 64)
+
+SD_W_MUX.v
+- SDRAM 쓰기 데이터 멀티플렉서
+- PCI 쓰기 데이터와 RISC 데이터 중 선택
+
+[7] 보조 처리 모듈
+===================
+PARSER.v
+- 명령어 파서
+- 입력: 4비트 명령어(pcmd), PCI/RISC 인터페이스 신호
+- 출력: blender 연산 코드, context 제어, FIFO 제어 신호
+
+BLENDER.v
+- 색상 처리/블렌딩 연산 모듈
+- 입력: 32비트 두 개 오퍼랜드(op1/op2), 4비트 연산 코드
+- 출력: 32비트 결과
+- 3-단계 파이프라인 레지스터(s1_op1/s1_op2, s2_op1/s2_op2, s3_op1)
+- 색상 성분: trans, red, green, blue 처리
+
+CONTEXT_MEM.v
+- Context 메모리
+- 32비트 × 4 레지스터
+- 입력: 8비트 명령어(cmd), 32비트 데이터
+- 읽기/쓰기 주소 및 제어
+
+[8] 클록 및 전원 관리
+======================
+CLOCK_GEN.v
+- 클록 생성 모듈
+- 입력: pclk(PCI), sdram_clk, sys_clk, test_mode, powersave
+- 출력: o_pclk, o_sdram_clk, o_sys_clk, o_sys_2x_clk
+- PLL 모듈 내부 인스턴스화
+- 전력 절감(powersave) 지원
+
+CLKMUL.v
+- 클록 멀티플라이어
+- 입력: CLK_IN
+- 출력: CLK_1X, CLK_2X (NBUFFX4_RVT 버퍼 사용)
+
+IOPOWER.v
+- I/O 전원 관리
+- IOVDD, IOVSS: I/O 전원 (L/R/B/T 위치마다 인스턴스)
+- VDD, VSS: Core 전원
+
+RESET_BLOCK.v
+- 리셋 신호 처리 및 동기화
+
+[9] 설계 특성
+==============
+- 설계 언어: Verilog (Behavioral & Structural)
+- 클록 도메인: sys_clk(125MHz추정), pclk(66MHz), sdram_clk
+- 데이터 폭: 16비트(RISC 코어), 32비트(PCI/블렌더)
+- 주소폭(SDRAM): 10비트 (~1K × 16bit)
+- 아키텍처: 5-단계 파이프라인 RISC 프로세서 + 멀티미디어 가속기(Blender)
+- 외부 인터페이스: PCI, SDRAM, 스캔 테스트
+- 전력 관리: 클록 게이팅, 전력 절감 모드
+
+[10] 모듈 계층 구조
+====================
+ORCA_TOP (최상위)
+├─ RISC 코어
+├─ PRGRM_CNT_TOP → PRGRM_FSM, PRGRM_DECODE, PRGRM_CNT
+├─ PCI 인터페이스 → PCI_CORE, PCI_RFIFO, PCI_WFIFO, PCI_W_MUX
+├─ SDRAM 인터페이스 → SDRAM_IF, SDRAM_RFIFO, SDRAM_WFIFO, SD_W_MUX
+├─ PARSER
+├─ BLENDER
+├─ CONTEXT_MEM
+├─ CLOCK_GEN → PLL, CLKMUL
+├─ RESET_BLOCK
+└─ IOPOWER
+
+이 구조는 RISC 프로세서와 멀티미디어 가속기(Blender)가 결합된 임베디드 시스템 설계입니다.

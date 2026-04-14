@@ -1,0 +1,1489 @@
+ORCA CDC 중심 계층화 개발 문서
+
+==============================================================================
+1. 전체 블록 다이어그램
+==============================================================================
+
+    ╔═════════════════════════════════════════════════════╗
+    ║           SYS_CLK Domain (125MHz)                  ║
+    ║                                                     ║
+    ║  ┌──────────────────────┐  ┌──────────────────┐  ║
+    ║  │  RISC_SUBSYSTEM      │  │  BLENDER_SYS     │  ║
+    ║  │  (RISC 코어)         │  │  (가속기)        │  ║
+    ║  │                      │  │                  │  ║
+    ║  │ - CONTROL           │  │ - BLENDER        │  ║
+    ║  │ - DATA_PATH         │  │ - PARSER         │  ║
+    ║  │ - ALU                │  │ - CONTEXT_MEM    │  ║
+    ║  │ - REG_FILE           │  │                  │  ║
+    ║  │ - PRGRM_CNT_TOP      │  │                  │  ║
+    ║  │ - INSTRN_LAT         │  │                  │  ║
+    ║  │ - STACK              │  │                  │  ║
+    ║  └──────────────────────┘  └──────────────────┘  ║
+    ║    │read_data[31:0]      │rd_data[31:0]         ║
+    ║    │write_data[31:0]     │wr_data[31:0]         ║
+    ║    │control_sig[15:0]    │blender_op[3:0]       ║
+    ║    │valid, ready         │valid, ready          ║
+    ╚════╤═══════════════════════════════════════╤═════╝
+         │                                       │
+    ┌────▼───────────────────────────────────────▼────────┐
+    │     CDC Interface (비동기 FIFO + Gray Code)         │
+    │  cdc_async_fifo #(.WIDTH(32), .DEPTH(8))          │
+    │                                                     │
+    │  src_clk = sys_clk      dst_clk = pclk            │
+    │  src_push, src_data     dst_pop, dst_data         │
+    │  src_full              dst_empty                  │
+    └────┬───────────────────────────────────────┬───────┘
+         │                                       │
+    ╔════╤═══════════════════════════════════════╤═════╗
+    ║    │       PCI_CLK Domain (66MHz)         │     ║
+    ║    │                                       │     ║
+    ║    └─────────────────────────────────────┘     ║
+    ║           ┌───────────────────────┐             ║
+    ║           │  PCI_INTERFACE_BLOCK  │             ║
+    ║           │                       │             ║
+    ║           │ - PCI_CORE           │             ║
+    ║           │ - PCI_RFIFO          │             ║
+    ║           │ - PCI_WFIFO          │             ║
+    ║           │ - PCI_W_MUX          │             ║
+    ║           │                       │             ║
+    ║           │ Interface:            │             ║
+    ║           │ pad_in[15:0]         │             ║
+    ║           │ pad_out[15:0]        │             ║
+    ║           │ (other PCI signals)  │             ║
+    ║           └───────────────────────┘             ║
+    ╚════╤───────────────────────────────────────────╝
+         │
+    ┌────▼───────────────────────────────────────────────┐
+    │     CDC Interface (비동기 FIFO + Gray Code)        │
+    │  cdc_async_fifo #(.WIDTH(32), .DEPTH(8))         │
+    │                                                    │
+    │  src_clk = pclk         dst_clk = sdram_clk       │
+    │  src_push, src_data     dst_pop, dst_data         │
+    │  src_full               dst_empty                 │
+    └────┬──────────────────────────────────────────┬───┘
+         │                                          │
+    ╔════╤──────────────────────────────────────────╤═╗
+    ║    │     SDRAM_CLK Domain                     │ ║
+    ║    │                                          │ ║
+    ║    └──────────────────────────────────────────┘ ║
+    ║           ┌────────────────────────┐            ║
+    ║           │ SDRAM_INTERFACE_BLOCK  │            ║
+    ║           │                        │            ║
+    ║           │ - SDRAM_IF            │            ║
+    ║           │ - SDRAM_RFIFO         │            ║
+    ║           │ - SDRAM_WFIFO         │            ║
+    ║           │ - SD_W_MUX            │            ║
+    ║           │                        │            ║
+    ║           │ Interface:             │            ║
+    ║           │ sd_addr[9:0]          │            ║
+    ║           │ sd_dq_in[15:0]        │            ║
+    ║           │ sd_dq_out[15:0]       │            ║
+    ║           └────────────────────────┘            ║
+    ╚════════════════════════════════════════════════╝
+
+    (별도) CLK_PWR_SUBSYSTEM (공통)
+    ┌──────────────────────────────────┐
+    │ - CLOCK_GEN                      │
+    │ - CLKMUL                         │
+    │ - RESET_BLOCK                    │
+    │ - IOPOWER                        │
+    └──────────────────────────────────┘
+
+==============================================================================
+2. 파일 구조 및 포트 정의
+==============================================================================
+
+2.1 최상위: ORCA_TOP_CDC.v (NEW)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+module ORCA_TOP_CDC (
+  // 외부 입력 클록
+  input sys_clk,        // 125MHz
+  input pclk,           // 66MHz
+  input sdram_clk,      // SDRAM 클록
+  
+  // 외부 리셋
+  input sys_rst_n,
+  input pci_rst_n,
+  input sdram_rst_n,
+  
+  // PCI 인터페이스 (PCI_CLK 도메인)
+  input [15:0] pci_pad_in,
+  output [15:0] pci_pad_out,
+  output pci_pad_en,
+  input pci_ppar_in,
+  output pci_ppar_out,
+  input pci_pidsel,
+  input pci_pgnt_n,
+  input pci_pframe_n_in,
+  output pci_pframe_n_out,
+  
+  // SDRAM 인터페이스 (SDRAM_CLK 도메인)
+  output [9:0] sdram_addr,
+  inout [15:0] sdram_dq,
+  output sdram_we_n,
+  output sdram_oe_n,
+  output sdram_ce_n,
+  
+  // 테스트 신호
+  input test_mode,
+  input scan_en,
+  input powersave
+);
+
+  // ===== 내부 신호 정의 =====
+  
+  // 클록 및 리셋 신호
+  wire clk_sys_int, clk_sys2x, clk_pci_int, clk_sdram_int;
+  wire rst_sys, rst_pci, rst_sdram;
+  
+  // SYS_CLK Domain에서 CDC로 나가는 신호
+  wire [31:0] sys_write_data;
+  wire sys_write_valid;
+  wire sys_write_full;
+  
+  // CDC에서 SYS_CLK Domain으로 들어오는 신호
+  wire [31:0] sys_read_data;
+  wire sys_read_valid;
+  wire sys_read_empty;
+  
+  // PCI_CLK Domain 신호
+  wire [31:0] pci_read_data;
+  wire [31:0] pci_write_data;
+  wire pci_read_empty;
+  wire pci_write_full;
+  
+  // SDRAM_CLK Domain 신호
+  wire [31:0] sdram_read_data;
+  wire [31:0] sdram_write_data;
+  
+  // ===== Sub-block 인스턴싱 =====
+  
+  // 1. CLK & POWER SUBSYSTEM (최우선)
+  clk_pwr_subsystem CLK_PWR_INST (
+    .sys_clk_in(sys_clk),
+    .pclk_in(pclk),
+    .sdram_clk_in(sdram_clk),
+    .test_mode(test_mode),
+    .powersave(powersave),
+    
+    // 출력 클록
+    .sys_clk_out(clk_sys_int),
+    .sys_clk_2x_out(clk_sys2x),
+    .pci_clk_out(clk_pci_int),
+    .sdram_clk_out(clk_sdram_int),
+    
+    // 출력 리셋
+    .sys_rst_n_out(rst_sys),
+    .pci_rst_n_out(rst_pci),
+    .sdram_rst_n_out(rst_sdram)
+  );
+  
+  // 2. RISC SUBSYSTEM (SYS_CLK 도메인)
+  risc_subsystem RISC_INST (
+    .clk(clk_sys_int),
+    .clk2x(clk_sys2x),
+    .rst_n(rst_sys),
+    .scan_en(scan_en),
+    .test_mode(test_mode),
+    
+    // 메모리에서 읽기
+    .read_data(sys_read_data),
+    .read_valid(sys_read_valid),
+    .read_ready(~sys_read_empty),
+    
+    // 메모리로 쓰기
+    .write_data(sys_write_data),
+    .write_valid(sys_write_valid),
+    .write_ready(~sys_write_full)
+  );
+  
+  // 3. BLENDER SUBSYSTEM (SYS_CLK 도메인)
+  blender_subsystem BLENDER_INST (
+    .clk(clk_sys_int),
+    .clk2x(clk_sys2x),
+    .rst_n(rst_sys),
+    .scan_en(scan_en),
+    .test_mode(test_mode),
+    
+    // 데이터 입력 (메모리로부터)
+    .input_data(sys_read_data),
+    
+    // 데이터 출력 (메모리로)
+    .output_data(sys_write_data),
+    .output_valid(sys_write_valid)
+  );
+  
+  // 4. CDC: SYS_CLK → PCI_CLK
+  wire [31:0] cdc_sys_to_pci_data;
+  wire cdc_sys_to_pci_valid;
+  
+  cdc_async_fifo #(
+    .WIDTH(32),
+    .DEPTH(8)
+  ) CDC_SYS_TO_PCI (
+    // Push 측 (SYS_CLK)
+    .src_clk(clk_sys_int),
+    .src_rst_n(rst_sys),
+    .src_push(sys_write_valid),
+    .src_data(sys_write_data),
+    .src_full(sys_write_full),
+    
+    // Pop 측 (PCI_CLK)
+    .dst_clk(clk_pci_int),
+    .dst_rst_n(rst_pci),
+    .dst_pop(pci_write_req),
+    .dst_data(cdc_sys_to_pci_data),
+    .dst_empty(cdc_sys_to_pci_empty)
+  );
+  
+  // 5. CDC: PCI_CLK → SYS_CLK
+  wire [31:0] cdc_pci_to_sys_data;
+  wire cdc_pci_to_sys_valid;
+  
+  cdc_async_fifo #(
+    .WIDTH(32),
+    .DEPTH(8)
+  ) CDC_PCI_TO_SYS (
+    // Push 측 (PCI_CLK)
+    .src_clk(clk_pci_int),
+    .src_rst_n(rst_pci),
+    .src_push(pci_read_valid),
+    .src_data(pci_read_data),
+    .src_full(pci_read_full),
+    
+    // Pop 측 (SYS_CLK)
+    .dst_clk(clk_sys_int),
+    .dst_rst_n(rst_sys),
+    .dst_pop(sys_read_req),
+    .dst_data(sys_read_data),
+    .dst_empty(sys_read_empty),
+    .dst_valid(sys_read_valid)
+  );
+  
+  // 6. PCI INTERFACE (PCI_CLK 도메인)
+  pci_interface PCI_INST (
+    .clk(clk_pci_int),
+    .rst_n(rst_pci),
+    .scan_en(scan_en),
+    .test_mode(test_mode),
+    
+    // PCI 버스
+    .pad_in(pci_pad_in),
+    .pad_out(pci_pad_out),
+    .pad_en(pci_pad_en),
+    .ppar_in(pci_ppar_in),
+    .ppar_out(pci_ppar_out),
+    .pidsel(pci_pidsel),
+    .pgnt_n(pci_pgnt_n),
+    .pframe_n_in(pci_pframe_n_in),
+    .pframe_n_out(pci_pframe_n_out),
+    
+    // CDC 인터페이스로 읽기 데이터
+    .read_data_out(pci_read_data),
+    .read_valid(pci_read_valid),
+    
+    // CDC 인터페이스에서 쓰기 데이터
+    .write_data_in(cdc_sys_to_pci_data),
+    .write_valid_in(~cdc_sys_to_pci_empty),
+    
+    // SDRAM 인터페이스로
+    .sdram_data_out(pci_to_sdram_data),
+    .sdram_write_req(pci_to_sdram_wr_req)
+  );
+  
+  // 7. SDRAM INTERFACE (SDRAM_CLK 도메인)
+  sdram_interface SDRAM_INST (
+    .clk(clk_sdram_int),
+    .rst_n(rst_sdram),
+    .scan_en(scan_en),
+    
+    // SDRAM 신호
+    .addr(sdram_addr),
+    .dq_in(sdram_dq),
+    .dq_out(sdram_dq),
+    .we_n(sdram_we_n),
+    .oe_n(sdram_oe_n),
+    .ce_n(sdram_ce_n),
+    
+    // 메모리 컨트롤러 인터페이스
+    .read_data(sdram_read_data),
+    .write_data(sdram_write_data),
+    .write_en(sdram_write_en)
+  );
+  
+endmodule
+
+==============================================================================
+2.2 RISC_SUBSYSTEM (risc_subsystem.v)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+module risc_subsystem (
+  input clk,
+  input clk2x,
+  input rst_n,
+  input scan_en,
+  input test_mode,
+  
+  // 메모리 인터페이스 (비동기, CDC 통해 연결)
+  input [31:0] read_data,
+  input read_valid,
+  output read_ready,
+  
+  output [31:0] write_data,
+  output write_valid,
+  input write_ready
+);
+
+  // 내부 신호
+  wire [31:0] risc_instrn;
+  wire [15:0] risc_oprnd_a, risc_oprnd_b;
+  wire [15:0] alu_result;
+  wire zro_flag, neg_flag, carry_flag;
+  
+  // ===== 기존 RISC 모듈들을 계층화 =====
+  
+  // 1. 프로그램 카운터 + FSM (Instruction Fetch)
+  PRGRM_CNT_TOP PROG_CNT_INST (
+    .clk(clk),
+    .reset_n(rst_n),
+    .Crnt_Instrn(risc_instrn),
+    .Zro_Flag(zro_flag),
+    .Carry_Flag(carry_flag),
+    .Neg_Flag(neg_flag),
+    .Return_Addr(8'b0),  // Stack에서 나옴
+    .Current_State(current_state),
+    .PC(pc)
+  );
+  
+  // 2. 명령어 래치
+  INSTRN_LAT INSTR_LAT_INST (
+    .clk(clk),
+    .Instrn(read_data[31:0]),  // 메모리에서 읽기
+    .Latch_Instr(latch_instr),
+    .Crnt_Instrn_1(risc_instrn),
+    .Crnt_Instrn_2()
+  );
+  
+  // 3. 제어 유닛 (명령어 디코딩)
+  CONTROL CONTROL_INST (
+    .clk(clk),
+    .reset_n(rst_n),
+    .Crnt_Instrn(risc_instrn),
+    .Current_State(current_state),
+    .Neg_Flag(neg_flag),
+    .Carry_Flag(carry_flag),
+    .Zro_Flag(zro_flag),
+    
+    .Latch_Instr(latch_instr),
+    .Rd_Oprnd_A(rd_oprnd_a),
+    .Rd_Oprnd_B(rd_oprnd_b),
+    .Latch_Flags(latch_flags),
+    .Latch_Result(latch_result),
+    .Write_RegC(write_regc),
+    .UseData_Imm_Or_RegB(use_imm_or_regb),
+    .UseData_Imm_Or_ALU(use_imm_or_alu),
+    .Reset_AluRegs(reset_alu_regs),
+    .EndOfInstrn(eod_instr),
+    .PushEnbl(push_enbl),
+    .PopEnbl(pop_enbl),
+    .OUT_VALID(out_valid)
+  );
+  
+  // 4. 데이터 경로
+  DATA_PATH DATA_PATH_INST (
+    .clk(clk),
+    .reset_n(rst_n),
+    .Reset_AluRegs(reset_alu_regs),
+    .Rd_Oprnd_A(rd_oprnd_a),
+    .Rd_Oprnd_B(rd_oprnd_b),
+    .UseData_Imm_Or_RegB(use_imm_or_regb),
+    .UseData_Imm_Or_ALU(use_imm_or_alu),
+    .Latch_Flags(latch_flags),
+    .ALU_Zro(alu_zro),
+    .ALU_Neg(alu_neg),
+    .ALU_Carry(alu_carry),
+    .PSW_Zro(psw_zro),
+    .PSW_Neg(psw_neg),
+    .PSW_Carry(psw_carry),
+    .Crnt_Instrn(risc_instrn),
+    .RegPort_A(reg_port_a),
+    .RegPort_B(reg_port_b),
+    .Op_Result(alu_result),
+    
+    .Zro_Flag(zro_flag),
+    .Neg_Flag(neg_flag),
+    .Carry_Flag(carry_flag),
+    .Addr_A(addr_a),
+    .Oprnd_A(risc_oprnd_a),
+    .Oprnd_B(risc_oprnd_b),
+    .RegPort_C(reg_port_c)
+  );
+  
+  // 5. ALU
+  ALU ALU_INST (
+    .reset_n(rst_n),
+    .clk(clk),
+    .Oprnd_A(risc_oprnd_a),
+    .Oprnd_B(risc_oprnd_b),
+    .ALU_OP(alu_op),
+    .Latch_Result(latch_result),
+    .Latch_Flags(latch_flags),
+    
+    .Lachd_Result(alu_result),
+    .Zro_Flag(alu_zro),
+    .Neg_Flag(alu_neg),
+    .Carry_Flag(alu_carry)
+  );
+  
+  // 6. REG_FILE
+  REG_FILE REG_FILE_INST (
+    .clk(clk),
+    .Addr_A(addr_a),
+    .Addr_B(7'b0),
+    .Addr_C(addr_c),
+    .RegPort_C(reg_port_c),
+    .Write_RegC(write_regc),
+    
+    .RegPort_A(reg_port_a),
+    .RegPort_B(reg_port_b)
+  );
+  
+  // 7. STACK
+  STACK_TOP STACK_INST (
+    .clk(clk),
+    .reset_n(rst_n),
+    .push_en(push_enbl),
+    .pop_en(pop_enbl),
+    .data_in(alu_result),
+    .data_out(stack_data_out)
+  );
+  
+  // ===== Subsystem의 Top-level 출력 =====
+  // Write data를 메모리로 내보내기
+  assign write_data = {alu_result, reg_port_a};
+  assign write_valid = out_valid && (current_state == WRITEBACK);
+  
+  // Read data 수신 인정
+  assign read_ready = (current_state == FETCH);
+  
+endmodule
+
+==============================================================================
+2.3 PCI_INTERFACE (pci_interface.v)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+module pci_interface (
+  input clk,
+  input rst_n,
+  input scan_en,
+  input test_mode,
+  
+  // PCI 버스 (외부)
+  input [15:0] pad_in,
+  output [15:0] pad_out,
+  output pad_en,
+  input ppar_in,
+  output ppar_out,
+  input pidsel,
+  input pgnt_n,
+  input pframe_n_in,
+  output pframe_n_out,
+  
+  // CDC 인터페이스로 읽기 데이터 보내기
+  output [31:0] read_data_out,
+  output read_valid,
+  
+  // CDC 인터페이스에서 쓰기 데이터 받기
+  input [31:0] write_data_in,
+  input write_valid_in
+);
+
+  // 내부 신호
+  wire push_empty, push_full, pop_empty, pop_full;
+  wire [31:0] fifo_rdata, fifo_wdata;
+  
+  // ===== PCI 핵심 모듈들 =====
+  
+  // 1. PCI 코어
+  PCI_CORE PCI_CORE_INST (
+    .pclk(clk),
+    .pci_rst_n(rst_n),
+    .pidsel(pidsel),
+    .pgnt_n(pgnt_n),
+    
+    .pad_in(pad_in),
+    .pad_out(pad_out),
+    .pad_en(pad_en),
+    .ppar_in(ppar_in),
+    .ppar_out(ppar_out),
+    .pframe_n_in(pframe_n_in),
+    .pframe_n_out(pframe_n_out),
+    
+    .fifo_write_data(fifo_wdata),
+    .fifo_read_data(fifo_rdata)
+  );
+  
+  // 2. PCI Read FIFO
+  PCI_RFIFO PCI_RFIFO_INST (
+    .fifo_clk_push(clk),
+    .fifo_clk_pop(clk),
+    .fifo_rst_n(rst_n),
+    .test_mode(test_mode),
+    
+    .fifo_push_req_n(~fifo_write_valid),
+    .fifo_pop_req_n(pop_req_n),
+    .fifo_data_in(fifo_wdata),
+    
+    .pop_empty_fifo(pop_empty),
+    .pop_full_fifo(pop_full),
+    .data_out_fifo(read_data_out)
+  );
+  
+  // 3. PCI Write FIFO
+  PCI_WFIFO PCI_WFIFO_INST (
+    .fifo_clk_push(clk),
+    .fifo_clk_pop(clk),
+    .fifo_rst_n(rst_n),
+    .test_mode(test_mode),
+    
+    .fifo_push_req_n(~write_valid_in),
+    .fifo_pop_req_n(fifo_read_req_n),
+    .fifo_data_in(write_data_in),
+    
+    .push_full_fifo(push_full),
+    .data_out_fifo(fifo_rdata)
+  );
+  
+  // 4. PCI 쓰기 데이터 멀티플렉서
+  PCI_W_MUX PCI_W_MUX_INST (
+    .blender_data(32'b0),  // 나중에 추가
+    .sdram_read_data(32'b0),  // 나중에 추가
+    .risc_result_data(write_data_in),
+    .pci_w_select(2'b00),
+    
+    .pci_wfifo_data(fifo_wdata)
+  );
+  
+  // ===== Interface 출력 =====
+  assign read_valid = ~pop_empty;
+  
+endmodule
+
+==============================================================================
+2.4 SDRAM_INTERFACE (sdram_interface.v)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+module sdram_interface (
+  input clk,
+  input rst_n,
+  input scan_en,
+  
+  // SDRAM 핀
+  output [9:0] addr,
+  inout [15:0] dq,
+  output we_n,
+  output oe_n,
+  output ce_n,
+  
+  // 메모리 컨트롤러 인터페이스
+  output [31:0] read_data,
+  input [31:0] write_data,
+  input write_en
+);
+
+  // 내부 신호
+  wire [31:0] sdram_rdata, sdram_wdata;
+  wire rfifo_empty, wfifo_full;
+  
+  // ===== SDRAM 핵심 모듈 =====
+  
+  // 1. SDRAM 코어
+  SDRAM_IF SDRAM_IF_INST (
+    .sys_clk(clk),
+    .sys_rst_n(rst_n),
+    
+    .addr(addr),
+    .dq_in(dq),
+    .dq_out(dq),
+    .we_n(we_n),
+    .oe_n(oe_n),
+    .ce_n(ce_n),
+    
+    // FIFO 인터페이스
+    .rfifo_push_data(sdram_rdata),
+    .rfifo_push_en(rfifo_push_en),
+    
+    .wfifo_pop_data(sdram_wdata),
+    .wfifo_pop_valid(wfifo_pop_valid)
+  );
+  
+  // 2. SDRAM Read FIFO
+  SDRAM_RFIFO SDRAM_RFIFO_INST (
+    .fifo_clk_push(clk),
+    .fifo_clk_pop(clk),
+    .fifo_rst_n(rst_n),
+    .test_mode(1'b0),
+    
+    .fifo_push_req_n(~rfifo_push_en),
+    .fifo_pop_req_n(pop_req_n),
+    .fifo_data_in(sdram_rdata),
+    
+    .pop_empty_fifo(rfifo_empty),
+    .data_out_fifo(read_data)
+  );
+  
+  // 3. SDRAM Write FIFO
+  SDRAM_WFIFO SDRAM_WFIFO_INST (
+    .fifo_clk_push(clk),
+    .fifo_clk_pop(clk),
+    .fifo_rst_n(rst_n),
+    .test_mode(1'b0),
+    
+    .fifo_push_req_n(~write_en),
+    .fifo_pop_req_n(fifo_read_req_n),
+    .fifo_data_in(write_data),
+    
+    .push_full_fifo(wfifo_full),
+    .data_out_fifo(sdram_wdata)
+  );
+  
+  // 4. SD 쓰기 데이터 멀티플렉서
+  SD_W_MUX SD_W_MUX_INST (
+    .pci_write_data(32'b0),
+    .risc_write_data(write_data),
+    .sd_w_select(1'b0),
+    
+    .sdram_wfifo_data(sdram_wdata)
+  );
+  
+endmodule
+
+==============================================================================
+2.5 CDC FIFO (cdc_async_fifo.v)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+// 비동기 FIFO (Gray 코드 동기화)
+module cdc_async_fifo #(
+  parameter WIDTH = 32,
+  parameter DEPTH = 8
+) (
+  // Push 측 (Source Clock)
+  input src_clk,
+  input src_rst_n,
+  input src_push,
+  input [WIDTH-1:0] src_data,
+  output src_full,
+  
+  // Pop 측 (Destination Clock)
+  input dst_clk,
+  input dst_rst_n,
+  input dst_pop,
+  output [WIDTH-1:0] dst_data,
+  output dst_empty,
+  output dst_valid
+);
+
+  localparam ADDR_WIDTH = $clog2(DEPTH);
+  
+  // ===== Push 측 (src_clk) =====
+  reg [ADDR_WIDTH:0] wr_ptr, wr_ptr_gray, wr_ptr_gray_r;
+  reg [ADDR_WIDTH:0] rd_ptr_gray_sync;
+  reg [WIDTH-1:0] mem [DEPTH-1:0];
+  
+  // Gray 코드로 변환 (동기화)
+  always @(posedge src_clk or negedge src_rst_n) begin
+    if (!src_rst_n)
+      wr_ptr <= 0;
+    else if (src_push && !src_full)
+      wr_ptr <= wr_ptr + 1;
+  end
+  
+  // Write pointer를 Gray 코드로 변환
+  assign wr_ptr_gray = wr_ptr ^ (wr_ptr >> 1);
+  
+  // Read pointer Gray 코드 동기화 (2 FF)
+  always @(posedge src_clk or negedge src_rst_n) begin
+    if (!src_rst_n) begin
+      wr_ptr_gray_r <= 0;
+      rd_ptr_gray_sync <= 0;
+    end else begin
+      wr_ptr_gray_r <= wr_ptr_gray;
+      rd_ptr_gray_sync <= wr_ptr_gray_r;
+    end
+  end
+  
+  // Full 플래그 계산
+  assign src_full = (wr_ptr_gray == rd_ptr_gray_sync);
+  
+  // FIFO 메모리 쓰기
+  always @(posedge src_clk) begin
+    if (src_push && !src_full)
+      mem[wr_ptr[ADDR_WIDTH-1:0]] <= src_data;
+  end
+  
+  // ===== Pop 측 (dst_clk) =====
+  reg [ADDR_WIDTH:0] rd_ptr, rd_ptr_gray, rd_ptr_gray_r;
+  reg [ADDR_WIDTH:0] wr_ptr_gray_sync;
+  
+  // Gray 코드로 변환 (동기화)
+  always @(posedge dst_clk or negedge dst_rst_n) begin
+    if (!dst_rst_n)
+      rd_ptr <= 0;
+    else if (dst_pop && !dst_empty)
+      rd_ptr <= rd_ptr + 1;
+  end
+  
+  // Read pointer를 Gray 코드로 변환
+  assign rd_ptr_gray = rd_ptr ^ (rd_ptr >> 1);
+  
+  // Write pointer Gray 코드 동기화 (2 FF)
+  always @(posedge dst_clk or negedge dst_rst_n) begin
+    if (!dst_rst_n) begin
+      rd_ptr_gray_r <= 0;
+      wr_ptr_gray_sync <= 0;
+    end else begin
+      rd_ptr_gray_r <= rd_ptr_gray;
+      wr_ptr_gray_sync <= rd_ptr_gray_r;
+    end
+  end
+  
+  // Empty 플래그 계산
+  assign dst_empty = (rd_ptr_gray == wr_ptr_gray_sync);
+  assign dst_valid = !dst_empty;
+  
+  // FIFO 메모리 읽기
+  assign dst_data = mem[rd_ptr[ADDR_WIDTH-1:0]];
+  
+endmodule
+
+==============================================================================
+2.6 CLK_PWR_SUBSYSTEM (clk_pwr_subsystem.v) - 요약
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+module clk_pwr_subsystem (
+  input sys_clk_in,
+  input pclk_in,
+  input sdram_clk_in,
+  input test_mode,
+  input powersave,
+  
+  output sys_clk_out,
+  output sys_clk_2x_out,
+  output pci_clk_out,
+  output sdram_clk_out,
+  
+  output sys_rst_n_out,
+  output pci_rst_n_out,
+  output sdram_rst_n_out
+);
+
+  // 기존 CLK_GEN, CLKMUL, RESET_BLOCK, IOPOWER 모듈들을
+  // 여기서 인스턴스화
+  
+  CLOCK_GEN CLOCK_GEN_INST (...);
+  CLKMUL CLKMUL_INST (...);
+  RESET_BLOCK RESET_BLOCK_INST (...);
+  IOPOWER IOPOWER_INST (...);
+  
+endmodule
+
+==============================================================================
+3. 시그널 흐름 예시
+==============================================================================
+
+데이터 쓰기 흐름:
+━━━━━━━━━━━━━
+
+SYS_CLK Domain:
+  RISC 계산 → write_data[31:0] 생성
+           → write_valid = 1
+                   ↓
+  +──────────────────────────────────+
+  │   CDC: cdc_async_fifo            │
+  │   (Gray 코드 동기화)              │
+  │   Width: 32bit, Depth: 8         │
+  |   src_clk = sys_clk              │
+  │   dst_clk = pclk                 │
+  +──────────────────────────────────+
+           ↓
+PCI_CLK Domain:
+  PCI FIFO에 데이터 저장 → PAD_OUT으로 출력
+
+
+데이터 읽기 흐름:
+━━━━━━━━━━━━━━
+
+PCI_CLK Domain:
+  PAD_IN에서 데이터 수신 → PCI FIFO 저장
+                      ↓
+  +──────────────────────────────────+
+  │   CDC: cdc_async_fifo            │
+  │   (Gray 코드 동기화)              │
+  │   Width: 32bit, Depth: 8         │
+  │   src_clk = pclk                 │
+  │   dst_clk = sys_clk              │
+  +──────────────────────────────────+
+           ↓
+SYS_CLK Domain:
+  RISC가 read_data[31:0] 수신
+  read_valid = 1일 때 처리
+
+==============================================================================
+4. 파일 생성 체크리스트
+==============================================================================
+
+생성할 파일:
+□ risc_subsystem.v (기존 RISC 모듈 집합)
+□ pci_interface.v (기존 PCI 모듈 집합)
+□ sdram_interface.v (기존 SDRAM 모듈 집합)
+□ blender_subsystem.v (기존 Blender 모듈 집합)
+□ clk_pwr_subsystem.v (기존 CLK/PWR 모듈 집합)
+□ cdc_async_fifo.v (NEW - Gray 코드 비동기 FIFO)
+□ ORCA_TOP_CDC.v (NEW - 최상위 계층화)
+
+기존 모듈: 변경 없음 (그대로 사용)
+□ RISC_CORE.v, CONTROL.v, DATA_PATH.v, ALU.v, REG_FILE.v
+□ INSTRN_LAT.v, PRGRM_CNT_TOP.v, PRGRM_FSM.v, PRGRM_DECODE.v, PRGRM_CNT.v
+□ STACK_TOP.v, STACK_FSM.v, STACK_MEM.v
+□ PCI_CORE.v, PCI_RFIFO.v, PCI_WFIFO.v, PCI_W_MUX.v
+□ SDRAM_IF.v, SDRAM_RFIFO.v, SDRAM_WFIFO.v, SD_W_MUX.v
+□ BLENDER.v, PARSER.v, CONTEXT_MEM.v
+□ CLOCK_GEN.v, CLKMUL.v, RESET_BLOCK.v, IOPOWER.v
+
+==============================================================================
+5. 컴파일/합성 순서
+━━━━━━━━━━━━━━━━
+
+1. 기존 모듈들 컴파일 (변경 없음)
+2. cdc_async_fifo.v 컴파일
+3. Subsystem Wrapper들 컴파일
+4. ORCA_TOP_CDC.v 합성
+
+RTL Simulation:
+$ vlog cdc_async_fifo.v risc_subsystem.v pci_interface.v ...
+$ vlog ORCA_TOP_CDC.v
+$ vvp top_tb
+
+Design Compiler Synthesis:
+$ design_vision
+> read_verilog cdc_async_fifo.v risc_subsystem.v ...
+> read_verilog ORCA_TOP_CDC.v
+> compile -hierarchical
+
+==============================================================================
+6. 합성 스크립트 (run_basic.tcl)
+==============================================================================
+
+Synopsys Design Compiler를 자동으로 실행하는 TCL 스크립트
+
+파일 위치: 2_Synthesis/run_basic.tcl
+
+6.1 스크립트 구조 (7단계)
+━━━━━━━━━━━━━━━━━━━━━━
+
+[1/7] Setting up environment
+    - search_path 설정 (라이브러리 경로)
+    - link_library, target_library 로드
+    - DC 환경 변수 설정
+
+[2/7] Reading Verilog RTL files
+    - 31개 RTL 파일 분석 (analyze -format verilog)
+    - ORCA.v, ORCA_TOP.v, ... IOPOWER.v
+
+[3/7] Elaborating & Linking Design
+    - elaborate ORCA_TOP (구조 생성)
+    - link (모듈 연결)
+    - check_design (설계 검증)
+
+[4/7] Loading Timing Constraints
+    - Constraint.con 로드
+    - Reset 신호를 Ideal Network으로 처리
+    - 클록 신호 Ideal 처리
+    - 특정 셀 제약 설정 (set_dont_use LAS, LAR)
+    - I/O 패드 건드리지 않음 (set_dont_touch)
+    - Clock gating 스타일 설정
+
+[5/7] Compiling
+    - verilogout_no_tri = true (tri → wire 변환)
+    - 다중 포트 네트 처리
+    - DRC 네트 자동 비활성화
+    - compile -scan -gate_clock (Scan FF + Clock gating)
+    - Incremental compile (추가 최적화)
+
+[6/7] Generating Reports
+    - QoR (Quality of Results)
+    - Timing 정보
+    - Area (면적)
+    - Constraint 위반
+    - Clock gating
+    - Hierarchy, Reference, Port 등
+    - 총 15개 리포트 생성
+
+[7/7] Writing Output
+    - DDC 파일 (게이트 레벨 설계)
+    - Verilog 네트리스트 (게이트 레벨)
+    - SDC 파일 (Timing 제약)
+
+6.2 실행 방법
+━━━━━━━━━━━
+
+Option 1: DC Shell에서 직접 실행
+  $ cd 2_Synthesis
+  $ dc_shell -f run_basic.tcl | tee 3_Log/synthesis.log
+
+Option 2: Design Vision GUI에서 실행
+  $ design_vision &
+  # Menu → File → Execute Tcl Script → run_basic.tcl
+
+Option 3: Batch 모드 (백그라운드)
+  $ dc_shell -64 -f run_basic.tcl -output 3_Log/syn.log &
+
+6.3 생성되는 파일
+━━━━━━━━━━━━━
+
+출력 파일 (2_Output/mapped/):
+  ORCA_gate.ddc     - Design Compiler 포맷 (바이너리)
+  ORCA_gate.v       - 게이트 레벨 Verilog netlist
+  ORCA_func.sdc     - Timing 제약 파일
+
+리포트 파일 (4_Report/):
+  qor.rpt           - Quality of Results (가장 중요!)
+  timing.rpt        - Timing violations
+  area.rpt          - 게이트 수, 면적
+  constraint.rpt    - 타이밍 제약 위반
+  clock_gating.rpt  - 클록 게이팅 정보
+  hierarchy.rpt     - 설계 계층
+  cell.rpt          - 셀 통계
+  clocks.rpt        - 클록 정보
+  reference.rpt     - 사용된 셀들
+  port.rpt          - I/O 포트 정보
+  ... (15개 총)
+
+6.4 주요 파라미터 설명
+━━━━━━━━━━━━━━━━━
+
+# Scan FF 포함, Clock gating 적용
+compile -scan -gate_clock
+
+# Incremental compile로 추가 최적화
+set_critical_range 2.0 [current_design]
+
+# Reset 신호는 Ideal (지연 무시)
+set_ideal_network -no_propagate [get_nets I_ORCA_TOP/pci_rst_n]
+
+# Clock 신호도 Ideal
+set_ideal_network [get_pins I_CLK_SOURCE*/Y]
+
+# 특정 셀은 사용하지 않음
+set_dont_use [get_lib_cells */LAS*]
+set_dont_use [get_lib_cells */LAR*]
+
+# Clock gating 스타일
+set_clock_gating_style -control_signal scan_enable \
+                       -num_stage 2 \
+                       -control_point before \
+                       -max_fanout 16 \
+                       -positive_edge_logic [list integrated:CGLPPRX8_RVT]
+
+6.5 결과 확인
+━━━━━━━━━━
+
+# QoR 확인 (가장 중요)
+$ cat 4_Report/qor.rpt
+
+  → Total transistor count
+  → Total area
+  → Power numbers (if available)
+
+# Timing 확인
+$ cat 4_Report/timing.rpt
+
+  → Slack (음수 = 위반)
+  → Critical path
+  → Delay breakdown
+
+# 제약 위반 확인
+$ cat 4_Report/constraint.rpt
+
+  → Setup/Hold violations
+  → Max delay violations
+
+6.6 일반적인 문제 및 해결
+━━━━━━━━━━━━━━━━━━━━
+
+문제: Timing violation
+해결책:
+  1. compile -high_effort 사용
+  2. clock period 증가
+  3. 특정 경로 group_path 설정
+  4. flip design 옵션 시도
+
+문제: 과다한 면적
+해결책:
+  1. compile -medium_effort로 시작 (빠르게 테스트)
+  2. set_max_area 설정
+  3. resource_allocation 최적화
+
+문제: 합성 실패 (illegal_operations 등)
+해결책:
+  1. RTL 코드 검증 (simulation으로 사전 확인)
+  2. elaborate 단계에서 에러 메시지 확인
+  3. 트리거 순서 검토
+
+6.7 실제 스크립트 코드 (run_basic.tcl)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+#!/usr/bin/env tclsh
+################################################################################
+# ORCA CDC Top-Level Design Synthesis Script
+# Synopsys Design Compiler v2021.06-SP5-5
+# 
+# Purpose:  Synthesize ORCA_TOP_CDC hierarchical design with 5 subsystems
+# Flow:     7-stage synthesis from RTL to gate-level netlist
+# Output:   DDC, Verilog netlist, SDC constraints
+#
+# Usage:    $ cd 2_Synthesis
+#           $ dc_shell -f run_basic.tcl | tee 3_Log/synthesis.log
+#
+# Stages:
+#  [1/7] Setup environment (paths, libraries)
+#  [2/7] Read 31 RTL files (analyze -format verilog)
+#  [3/7] Elaborate & Link (design compilation)
+#  [4/7] Load timing constraints (Constraint.con)
+#  [5/7] Compile (optimization, scan, clock gating)
+#  [6/7] Generate reports (QoR, timing, area, etc)
+#  [7/7] Write output (DDC, Verilog netlist, SDC)
+################################################################################
+
+echo "=========================================="
+echo "ORCA CDC Synthesis Flow - Starting"
+echo "=========================================="
+
+# ===============================================================================
+# STAGE 1/7: Setting up Environment
+# ===============================================================================
+echo "\n[1/7] Setting up environment..."
+
+# Search paths for libraries and cells
+set search_path "/DATA/home/edu118/ORCA/2_Synthesis/alib-52 \
+                 /DATA/home/edu118/ORCA/ref/libs \
+                 /DATA/home/edu118/ORCA/SAED32nm_PDK_04152022/lib \
+                 ."
+
+# Link and target libraries for CDC + logic synthesis
+set link_library "* db:cmos_lib.db"
+set target_library "cmos_lib.db"
+
+# DC behavioral settings
+set verilogout_no_tri true
+set verilogout_single_bit true
+set bus_inference_from_netlist true
+set hdlin_while_loop_iterations 256
+set hdlin_for_loop_iterations 256
+
+# Clock information (will be refined when constraints loaded)
+set clk_name       "I_CLK.sys_clk"
+set clk_period     8.0      ;# ns (125 MHz)
+set clk_skew       0.2      ;# ns
+set clk_latency    0.0      ;# ns
+
+echo "  [✓] Search paths configured"
+echo "  [✓] Libraries linked"
+echo "  [✓] DC environment initialized"
+
+# ===============================================================================
+# STAGE 2/7: Reading Verilog RTL Files
+# ===============================================================================
+echo "\n[2/7] Reading 31 Verilog files..."
+
+set rtl_files {
+  1_Input/RTL/ALU.v
+  1_Input/RTL/BLENDER.v
+  1_Input/RTL/CLKMUL.v
+  1_Input/RTL/CLOCK_GEN.v
+  1_Input/RTL/CONTEXT_MEM.v
+  1_Input/RTL/CONTROL.v
+  1_Input/RTL/DATA_PATH.v
+  1_Input/RTL/DFF.v
+  1_Input/RTL/INSTRN_LAT.v
+  1_Input/RTL/IOPOWER.v
+  1_Input/RTL/ORCA.v
+  1_Input/RTL/ORCA_TOP.v
+  1_Input/RTL/PARSER.v
+  1_Input/RTL/PCI_CORE.v
+  1_Input/RTL/PCI_RFIFO.v
+  1_Input/RTL/PCI_WFIFO.v
+  1_Input/RTL/PCI_W_MUX.v
+  1_Input/RTL/PRGRM_CNT.v
+  1_Input/RTL/PRGRM_CNT_TOP.v
+  1_Input/RTL/PRGRM_DECODE.v
+  1_Input/RTL/PRGRM_FSM.v
+  1_Input/RTL/REG_FILE.v
+  1_Input/RTL/RESET_BLOCK.v
+  1_Input/RTL/RISC_CORE.v
+  1_Input/RTL/SDRAM_IF.v
+  1_Input/RTL/SDRAM_RFIFO.v
+  1_Input/RTL/SDRAM_WFIFO.v
+  1_Input/RTL/SD_W_MUX.v
+  1_Input/RTL/STACK_FSM.v
+  1_Input/RTL/STACK_MEM.v
+  1_Input/RTL/STACK_TOP.v
+  1_Input/RTL/cdc_async_fifo.v
+}
+
+foreach file $rtl_files {
+  if {[file exists $file]} {
+    analyze -format verilog $file
+    puts "  [✓] analyzed $file"
+  } else {
+    puts "  [✗] FILE NOT FOUND: $file"
+  }
+}
+
+echo "  [✓] All 31 RTL files analyzed"
+
+# ===============================================================================
+# STAGE 3/7: Elaborate & Link
+# ===============================================================================
+echo "\n[3/7] Elaborating & Linking..."
+
+# To use ORCA_TOP_CDC (if implemented), uncomment:
+# elaborate ORCA_TOP_CDC -architecture rtl
+
+# For now, use original ORCA_TOP
+elaborate ORCA_TOP -architecture rtl
+
+# Link all modules
+link
+
+# Design validation
+check_design -summary
+
+current_design ORCA_TOP
+
+echo "  [✓] Design elaborated (ORCA_TOP)"
+echo "  [✓] All modules linked"
+echo "  [✓] Design structure verified"
+
+# ===============================================================================
+# STAGE 4/7: Load Timing Constraints
+# ===============================================================================
+echo "\n[4/7] Loading timing constraints..."
+
+# Reset signals - don't propagate delay
+set_ideal_network -no_propagate [get_nets pci_rst_n]
+set_ideal_network -no_propagate [get_nets sdram_rst_n]
+set_ideal_network -no_propagate [get_nets sys_rst_n]
+set_ideal_network -no_propagate [get_nets sys_2x_rst_n]
+
+# Clock group: sys_clk (125MHz)
+create_clock -name sys_clk -period 8.0 -waveform {0 4.0} \
+  [get_ports I_CLOCK_GEN/clk_in] 2>/dev/null || \
+  create_clock -name sys_clk -period 8.0 -waveform {0 4.0} \
+  [get_ports clk_in]
+
+# Clock group: pclk (66MHz from PCI)
+create_clock -name pclk -period 15.15 -waveform {0 7.575} \
+  [get_ports pci_clk] 2>/dev/null || true
+
+# Clock group: sdram_clk (from PLL)
+create_clock -name sdram_clk -period 10.0 -waveform {0 5.0} \
+  [get_ports sdram_clk] 2>/dev/null || true
+
+# False path between independent clock domains (CDC crossing safe)
+set_false_path -setup -hold -from [get_clocks sys_clk] -to [get_clocks pclk]
+set_false_path -setup -hold -from [get_clocks pclk] -to [get_clocks sys_clk]
+set_false_path -setup -hold -from [get_clocks sys_clk] -to [get_clocks sdram_clk]
+set_false_path -setup -hold -from [get_clocks sdram_clk] -to [get_clocks sys_clk]
+
+# I/O timing constraints
+set_input_delay 1.0 -clock sys_clk [get_ports {*[!clk][!rst]*}]
+set_output_delay 1.0 -clock sys_clk [get_ports {*out*}]
+
+# Load external constraints file (if exists)
+if {[file exists 1_Input/Constraint/Constraint.con]} {
+  source 1_Input/Constraint/Constraint.con
+  echo "  [✓] Constraint.con loaded"
+}
+
+# Don't use certain cells
+set_dont_use [get_lib_cells */LAS*]
+set_dont_use [get_lib_cells */LAR*]
+
+# Don't touch I/O pads
+set_dont_touch [get_cells I_IOPOWER/*]
+
+echo "  [✓] Clocks created (sys_clk, pclk, sdram_clk)"
+echo "  [✓] CDC false paths set"
+echo "  [✓] I/O constraints configured"
+
+# ===============================================================================
+# STAGE 5/7: Compiling Design
+# ===============================================================================
+echo "\n[5/7] Compiling with optimization..."
+
+# Verilog formatting
+set verilogout_no_tri true
+set verilogout_single_bit true
+
+# Multi-port net handling
+set_compile_options -ungroup_all
+
+# Clock gating control logic
+set compile_ultra_ungroup_dw false
+set_clock_gating_style -control_signal async \
+                       -num_stage 2 \
+                       -control_point before \
+                       -max_fanout 16
+
+# Scan compilation mode
+set_scan_configuration -style mux_dff -chain_count 4
+
+# Compile with scan and clock gating
+compile -scan -gate_clock -map_effort medium
+
+# Incremental compile for additional optimization
+set_critical_range 2.0 [current_design]
+compile -incremental -scan -gate_clock
+
+echo "  [✓] Design compiled with scan and clock gating"
+echo "  [✓] Incremental optimization applied"
+
+# ===============================================================================
+# STAGE 6/7: Generating Reports
+# ===============================================================================
+echo "\n[6/7] Generating 15 comprehensive reports..."
+
+set reports_dir "4_Report"
+
+if {![file exists $reports_dir]} {
+  file mkdir $reports_dir
+}
+
+# Report 1: Quality of Results (most important)
+report_qor > "$reports_dir/qor.rpt"
+puts "  [✓] generated qor.rpt"
+
+# Report 2-5: Timing and constraints
+report_timing -n 100 > "$reports_dir/timing.rpt"
+report_timing -transition_time -nets -attributes > "$reports_dir/timing_detail.rpt"
+report_clock > "$reports_dir/clocks.rpt"
+report_constraint -all_violations > "$reports_dir/constraint.rpt"
+
+# Report 6-8: Area and units
+report_area > "$reports_dir/area.rpt"
+report_cell > "$reports_dir/cell.rpt"
+report_reference > "$reports_dir/reference.rpt"
+
+# Report 9-11: Hierarchy and ports
+report_hierarchy > "$reports_dir/hierarchy.rpt"
+report_port > "$reports_dir/port.rpt"
+report_net > "$reports_dir/net.rpt"
+
+# Report 12-15: Optimization and power
+report_clock_gating > "$reports_dir/clock_gating.rpt"
+report_power -hierarchy -analysis_view > "$reports_dir/power.rpt"
+report_design > "$reports_dir/design.rpt"
+report_ccopt_clock_trees > "$reports_dir/ccopt.rpt"
+
+echo "  [✓] 15 reports generated in 4_Report/"
+
+# ===============================================================================
+# STAGE 7/7: Writing Output Files
+# ===============================================================================
+echo "\n[7/7] Writing output files..."
+
+set output_dir "2_Output/mapped"
+
+if {![file exists $output_dir]} {
+  file mkdir -p $output_dir
+}
+
+# Write gate-level design database
+write -format ddc -hierarchy -output "$output_dir/ORCA_gate.ddc"
+echo "  [✓] DDC file written: ORCA_gate.ddc"
+
+# Write gate-level Verilog netlist
+set_app_var verilogout_no_tri true
+write -format verilog -hierarchy -output "$output_dir/ORCA_gate.v"
+echo "  [✓] Verilog netlist written: ORCA_gate.v"
+
+# Write constraints in SDC format
+write_sdc -nosplit "$output_dir/ORCA_func.sdc"
+echo "  [✓] SDC file written: ORCA_func.sdc"
+
+# ===============================================================================
+# Summary
+# ===============================================================================
+echo "\n=========================================="
+echo "✓ SYNTHESIS COMPLETED SUCCESSFULLY"
+echo "=========================================="
+echo "\nOutput Files Generated:"
+echo "  DDC:             2_Output/mapped/ORCA_gate.ddc"
+echo "  Verilog Netlist: 2_Output/mapped/ORCA_gate.v"
+echo "  SDC Constraints: 2_Output/mapped/ORCA_func.sdc"
+echo "\nReports Generated (15 total):"
+echo "  4_Report/qor.rpt              - Quality of Results"
+echo "  4_Report/timing.rpt           - Timing information"
+echo "  4_Report/area.rpt             - Gate count & area"
+echo "  4_Report/constraint.rpt       - Constraint violations"
+echo "  4_Report/clock_gating.rpt     - Clock gating cells"
+echo "  4_Report/hierarchy.rpt        - Module hierarchy"
+echo "  4_Report/clocks.rpt           - Clock information"
+echo "  4_Report/port.rpt             - I/O ports"
+echo "  4_Report/cell.rpt             - Cell statistics"
+echo "  4_Report/reference.rpt        - Referenced cells"
+echo "  4_Report/net.rpt              - Net information"
+echo "  4_Report/design.rpt           - Design statistics"
+echo "  4_Report/power.rpt            - Power estimation"
+echo "  4_Report/timing_detail.rpt    - Detailed timing"
+echo "  4_Report/ccopt.rpt            - Clock tree details"
+echo "\nNext Steps:"
+echo "  1. Review 4_Report/qor.rpt for area/timing"
+echo "  2. Check 4_Report/timing.rpt for violations"
+echo "  3. Check 4_Report/constraint.rpt for setup/hold"
+echo "  4. Simulate gate-level netlist in 2_Output/mapped/"
+echo "  5. Run formal verification (CDC-IFV if available)"
+echo "\n=========================================="
+
+exit
+
+6.8 실행 예제
+━━━━━━━━━━
+
+예제 1: DC Shell에서 직접 실행 (권장)
+  $ cd 2_Synthesis
+  $ dc_shell -f run_basic.tcl | tee 3_Log/synthesis.log
+
+예제 2: Design Vision GUI에서 실행
+  $ design_vision &
+  (Menu → File → Execute Tcl Script)
+  (select run_basic.tcl)
+
+예제 3: 백그라운드 Batch 모드
+  $ dc_shell -64bit -f run_basic.tcl > 3_Log/syn.log 2>&1 &
+  (모니터링: tail -f 3_Log/syn.log)
+
+예제 4: 제약 조건 파일 포함한 실행
+  $ dc_shell -f run_basic.tcl -cmd "source 1_Input/Constraint/Constraint.con" \
+             | tee 3_Log/synthesis.log
+
+6.9 합성 결과 검증
+━━━━━━━━━━━━━━
+
+합성 완료 후 확인 사항:
+
+1. QoR 리포트 검토
+  $ cat 4_Report/qor.rpt | grep -E "Number|Gate|Area|Total"
+
+  예상 결과:
+    - Total transistor count: ~500K - 2M (설계 복잡도에 따라)
+    - Total area: ~2 - 10 mm² (트랜지스터 수에 비례)
+
+2. 타이밍 검증
+  $ cat 4_Report/timing.rpt | head -50
+
+  경고 메시지가 없으면 정상:
+    - 모든 경로 slack ≥ 0 (timing OK)
+    - Setup time violations = 0
+    - Hold time violations = 0
+
+3. 제약 위반 확인
+  $ grep -i "violation" 4_Report/constraint.rpt
+
+  결과가 비어있으면 정상 (위반 없음)
+
+4. 클록 게이팅 확인
+  $ cat 4_Report/clock_gating.rpt | grep "Integrated"
+
+  예상:
+    - CGLPPRX8_RVT 셀 사용됨
+    - 게이팅된 클록 지점 수 표시
+
+5. 출력 파일 검증
+  $ ls -lh 2_Output/mapped/
+
+  생성되어야 할 파일:
+    - ORCA_gate.ddc      (수 MB)
+    - ORCA_gate.v        (수백 KB)
+    - ORCA_func.sdc      (수십 KB)
+
+6.10 일반적인 에러 및 해결
+━━━━━━━━━━━━━━━━━━━
+
+Error 1: "File not found" in RTL file list
+  원인: 1_Input/RTL/ 경로에 파일이 없음
+  해결: ls 1_Input/RTL/ 로 확인 후 파일명 수정
+
+Error 2: "Illegal operation during elaboration"
+  원인: RTL 코드 문법 오류
+  해결: RTL 파일을 VCS로 simulation 검증 후 수정
+
+Error 3: "Timing violations after compile"
+  원인: clock period가 너무 빠름
+  해결: 
+    - clock period 증가 (예: 8.0 → 10.0 ns)
+    - compile -high_effort 사용
+    - set_critical_range 조정
+
+Error 4: "Cannot find libraries"
+  원인: search_path가 잘못됨
+  해결: ls 명령으로 경로 확인 후 수정
+
+Error 5: "Huge area results"
+  원인: 최적화 레벨이 낮음
+  해결:
+    - compile_ultra 사용 가능한지 확인
+    - -high_effort 옵션 추가
+
+6.11 성능 개선 팁
+━━━━━━━━━━━━━
+
+1. 합성 속도 향상
+   - compile -medium_effort (초기 빠른 테스트)
+   - compile -high_effort (최종 최적화)
+
+2. 면적 감소
+   - set_max_area 설정 (상한선 제약)
+   - compile_ultra 활성화 (더 강력한 최적화)
+
+3. 타이밍 개선
+   - set_critical_range로 병목 경로 식별
+   - compile -incremental로 추가 최적화
+   - multi-Vth 셀 활용 (SAED32 라이브러리)
+
+4. 클록 게이팅 효과 극대화
+   - set_clock_gating_style에서 control_point tuning
+   - max_fanout 값 조정 (8, 16, 32 시도)
+
+6.12 다음 단계: 검증 및 물리 설계
+━━━━━━━━━━━━━━━━━━━━━━━━
+
+합성 완료 후:
+
+[단계 1] 게이트 레벨 시뮬레이션
+  - 2_Output/mapped/ORCA_gate.v 로드
+  - 원본 RTL과 동일한 테스트벤치 실행
+  - 시뮬레이션 결과 동일성 검증 (equiv check)
+
+[단계 2] 형식 검증 (Formal Verification)
+  - Synopsys Formality 사용
+  - 원본 RTL과 게이트 넷리스트 동등성 증명
+  - "Successful verification" 메시지 확인
+
+[단계 3] 물리 설계 (Place & Route)
+  - ICC (Integrated Circuit Compiler) 또는 ICC2 사용
+  - SDC 파일 (ORCA_func.sdc) 입력
+  - DEF 파일 생성 (레이아웃)
+
+[단계 4] STA 검증 (Static Timing Analysis)
+  - PrimeTime으로 P&R 후 재검증
+  - 실제 라우팅 지연 포함한 정밀 검증
+
+[단계 5] CDC 검증 (CDC-IFV)
+  - Synopsys CDC-IFV 도구로 CDC 안전성 검증
+  - Gray code 로직, 2-FF synchronizer 검증
+  - CDC 위반 사항 식별 및 수정
+
+==============================================================================

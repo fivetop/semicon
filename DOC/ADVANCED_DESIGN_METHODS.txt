@@ -1,0 +1,408 @@
+ORCA 설계 구조 개선 방안 비교
+
+==============================================================================
+1. 현재 제안 vs 대안 비교
+==============================================================================
+
+방법 1: 5-Block 계층화 (현재 제안)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+장점:
+✓ 구현이 간단
+✓ 빠른 적용 가능
+✓ 기본적인 모듈성
+
+단점:
+✗ 클록 도메인 관리 미흡
+✗ 인터페이스 프로토콜 미정의
+✗ 향후 확장성 제한
+✗ CDC 검증 따로 필요
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+
+방법 2: Clock Domain Crossing (CDC) 중심 계층화 ⭐⭐⭐
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+이 방법이 더 나음!
+
+구조:
+    SYS_CLK Domain (125MHz)
+    ┌─────────────────────┐
+    │ RISC_SUBSYSTEM      │
+    │ BLENDER_SUBSYSTEM   │
+    └─────────────────────┘
+           ↓ CDC Interface
+    ┌─────────────────────┐
+    │ PCI_CLK Domain      │
+    │ (66MHz)             │
+    │ PCI_INTERFACE       │
+    └─────────────────────┘
+           ↓ CDC Interface
+    ┌─────────────────────┐
+    │ SDRAM_CLK Domain    │
+    │ SDRAM_INTERFACE     │
+    └─────────────────────┘
+    
+    CLK_PWR (공통)
+
+장점:
+✓ 클록 도메인별 명시적 분리
+✓ CDC 검증 중앙화 가능
+✓ 각 도메인 독립 최적화
+✓ Metastability 위험 최소화
+✓ CDC 도구(Cadence, Synopsys) 자동 검증 가능
+
+구현 예:
+
+module ORCA_TOP_CDC (
+  // 외부 입력
+  input sys_clk, pclk, sdram_clk,
+  input sys_rst_n, pci_rst_n, sdram_rst_n,
+  
+  // PCI 신호
+  input [15:0] pci_pad_in,
+  output [15:0] pci_pad_out,
+  
+  // SDRAM 신호
+  input [15:0] sdram_dq_in,
+  output [15:0] sdram_dq_out
+);
+
+// ===== SYS_CLK Domain =====
+wire [31:0] sys_read_data_from_cdc;   // From CDC (async)
+wire [31:0] sys_write_data_to_cdc;    // To CDC (async)
+wire sys_read_eop, sys_write_eop;
+
+risc_subsystem RISC (
+  .clk(sys_clk),
+  .rst_n(sys_rst_n),
+  .read_data(sys_read_data_from_cdc),
+  .write_data(sys_write_data_to_cdc),
+  .write_valid(sys_write_eop)
+);
+
+blender_subsystem BLENDER (
+  .clk(sys_clk),
+  .rst_n(sys_rst_n),
+  .input_data(sys_read_data_from_cdc),
+  .output_data(sys_write_data_to_cdc)
+);
+
+// ===== CDC Interfaces (비동기 FIFO + Gray 코드) =====
+cdc_async_fifo #(.WIDTH(32), .DEPTH(8)) SYS_TO_PCI (
+  .src_clk(sys_clk),
+  .src_rst_n(sys_rst_n),
+  .src_push(sys_write_eop),
+  .src_data(sys_write_data_to_cdc),
+  .src_full(sys_write_full),
+  
+  .dst_clk(pclk),
+  .dst_rst_n(pci_rst_n),
+  .dst_pop(pci_rd_req),
+  .dst_data(pci_write_data),
+  .dst_empty(pci_write_empty)
+);
+
+// ===== PCI_CLK Domain =====
+pci_interface PCI (
+  .clk(pclk),
+  .rst_n(pci_rst_n),
+  .pad_in(pci_pad_in),
+  .pad_out(pci_pad_out),
+  .read_data(pci_read_data),
+  .write_data(pci_write_data)
+);
+
+// ===== SDRAM_CLK Domain =====
+sdram_interface SDRAM (
+  .clk(sdram_clk),
+  .rst_n(sdram_rst_n),
+  .dq_in(sdram_dq_in),
+  .dq_out(sdram_dq_out)
+);
+
+// ===== Clock & Power =====
+clk_pwr_subsystem CLK_PWR (...);
+
+endmodule
+
+장점 상세:
+1. CDC 검증 자동화 가능
+   - Cadence CrossTime, Synopsys CDC-IFV 사용
+   - Metastability 버그 사전 탐지
+
+2. 각 도메인 검증 독립
+   - sys_clk 영역 검증
+   - pclk 영역 검증
+   - sdram_clk 영역 검증
+   - 병렬 검증으로 시간 단축
+
+3. 성능 최적화
+   - 각 도메인별 timing closure
+   - 주파수 독립적 최적화
+
+4. 신뢰성
+   - Metastability 위험 제거
+   - Gray 코드로 동기화 오류 방지
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+
+방법 3: AXI/AHB Bus 기반 Platform (SoC Architecture) ⭐⭐⭐⭐
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+이 방법이 가장 강력하고 확장성 최고!
+
+구조:
+        Master Devices          AXI Interconnect         Slave Devices
+    ┌──────────────────┐      ┌────────────┐      ┌──────────────────┐
+    │ RISC_CORE        │─────>│            │─────>│ SDRAM Controller │
+    │ (AXI Master)     │      │   AXI-v4   │      │ (AXI Slave)      │
+    └──────────────────┘      │            │      └──────────────────┘
+    ┌──────────────────┐      │   Fabric   │      ┌──────────────────┐
+    │ BLENDER          │─────>│            │─────>│ PCI Controller   │
+    │ (AXI Master)     │      │            │      │ (AXI Slave)      │
+    └──────────────────┘      │            │      └──────────────────┘
+    ┌──────────────────┐      │            │      ┌──────────────────┐
+    │ DMA Engine       │─────>│            │─────>│ Peripheral Ctrl  │
+    │ (AXI Master)     │      │            │      │ (AXI Slave)      │
+    └──────────────────┘      │            │      └──────────────────┘
+                              └────────────┘
+
+장점:
+✓ 산업 표준 (ARM AXI-4, AMBA)
+✓ 극도의 확장성 (마스터/슬레이브 자유로이 추가)
+✓ 성능 최적화 (다중 마스터 지원, 대역폭 극대화)
+✓ 도구 지원 (Cadence, Synopsys, Mentor)
+✓ IP 재사용성 극대 (오픈소스 IP 사용 가능)
+✓ 검증 간단 (표준 TLM, UVM 참고 모델)
+
+단점:
+✗ 초기 구현 복잡
+✗ 오버헤드 (버스 지연)
+✗ 배우는 시간 필요 (AXI 프로토콜)
+
+추천:
+- 향후 여러 프로젝트 재사용 계획
+- 높은 확장성 필요
+- 성능 중요
+
+구현 예:
+
+module orca_soc_axi (
+  input clk, rst_n,
+  input test_mode, scan_en,
+  
+  // PCI Interface (APB/AXI 변환)
+  input [15:0] pci_pad_in,
+  output [15:0] pci_pad_out,
+  
+  // SDRAM Interface (AXI)
+  output [9:0] sdram_addr,
+  inout [15:0] sdram_data
+);
+
+// ===== AXI Interconnect 구성 =====
+
+// Master #1: RISC Core (AXI)
+wire [AXI_WIDTH-1:0] axi_m_risc_awaddr;
+wire [AXI_WIDTH-1:0] axi_m_risc_araddr;
+wire [63:0] axi_m_risc_wdata;
+wire [63:0] axi_m_risc_rdata;
+wire axi_m_risc_awvalid, axi_m_risc_awready;
+wire axi_m_risc_wvalid, axi_m_risc_wready;
+wire axi_m_risc_bvalid, axi_m_risc_bready;
+wire axi_m_risc_arvalid, axi_m_risc_arready;
+wire axi_m_risc_rvalid, axi_m_risc_rready;
+
+risc_axi_adapter RISC_ADAPT (
+  .clk(clk),
+  .rst_n(rst_n),
+  // RISC 내부 신호
+  .risc_addr(risc_addr),
+  .risc_data_out(risc_data_out),
+  .risc_data_in(risc_data_in),
+  .risc_wr_en(risc_wr_en),
+  .risc_rd_en(risc_rd_en),
+  // AXI Master 신호
+  .axi_awaddr(axi_m_risc_awaddr),
+  .axi_awvalid(axi_m_risc_awvalid),
+  .axi_awready(axi_m_risc_awready),
+  ... // other AXI signals
+);
+
+// Master #2: Blender (AXI)
+blender_axi_adapter BLENDER_ADAPT (
+  .clk(clk),
+  .rst_n(rst_n),
+  // Blender 내부 신호
+  .blender_addr(blender_addr),
+  .blender_data_out(blender_data_out),
+  .blender_data_in(blender_data_in),
+  // AXI Master 신호
+  .axi_awaddr(axi_m_blender_awaddr),
+  .axi_awvalid(axi_m_blender_awvalid),
+  ... // other AXI signals
+);
+
+// Slave #1: SDRAM (AXI)
+wire [AXI_WIDTH-1:0] axi_s_sdram_awaddr;
+wire [AXI_WIDTH-1:0] axi_s_sdram_araddr;
+wire [63:0] axi_s_sdram_wdata;
+wire [63:0] axi_s_sdram_rdata;
+wire axi_s_sdram_awvalid, axi_s_sdram_awready;
+wire axi_s_sdram_wvalid, axi_s_sdram_wready;
+wire axi_s_sdram_bvalid, axi_s_sdram_bready;
+wire axi_s_sdram_arvalid, axi_s_sdram_arready;
+wire axi_s_sdram_rvalid, axi_s_sdram_rready;
+
+axi_sdram_controller SDRAM_CTRL (
+  .clk(clk),
+  .rst_n(rst_n),
+  // AXI Slave 신호
+  .axi_awaddr(axi_s_sdram_awaddr),
+  .axi_awvalid(axi_s_sdram_awvalid),
+  ... // other AXI signals
+  // SDRAM 인터페이스
+  .sdram_addr(sdram_addr),
+  .sdram_dq_out(sdram_dq_out),
+  .sdram_dq_in(sdram_dq_in),
+  .sdram_we_n(sdram_we_n)
+);
+
+// Slave #2: PCI (AXI-to-APB)
+pci_axi_slave PCI_SLV (
+  .clk(clk),
+  .rst_n(rst_n),
+  // AXI Slave 신호
+  .axi_awaddr(axi_s_pci_awaddr),
+  .axi_awvalid(axi_s_pci_awvalid),
+  ... // other AXI signals
+  // PCI 신호
+  .pci_pad_in(pci_pad_in),
+  .pci_pad_out(pci_pad_out)
+);
+
+// AXI Interconnect (AMBA VIP 사용)
+axi_interconnect_v2_1 #(
+  .C_AXI_ADDR_WIDTH(32),
+  .C_AXI_DATA_WIDTH(64),
+  .C_NUM_SLAVE_SLOTS(2),
+  .C_NUM_MASTER_SLOTS(2)
+) AXI_FABRIC (
+  .aclk(clk),
+  .aresetn(rst_n),
+  // Slave 포트
+  .s_axi_awaddr({axi_m_blender_awaddr, axi_m_risc_awaddr}),
+  .s_axi_awvalid({axi_m_blender_awvalid, axi_m_risc_awvalid}),
+  ... // other AXI signals
+  // Master 포트
+  .m_axi_awaddr({axi_s_pci_awaddr, axi_s_sdram_awaddr}),
+  .m_axi_awvalid({axi_s_pci_awvalid, axi_s_sdram_awvalid}),
+  ... // other AXI signals
+);
+
+endmodule
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+
+방법 4: Modular Dataflow Pipeline (성능 최적화) ⭐⭐⭐
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+RISC 파이프라인을 더 세밀하게 구조화
+
+구조:
+    Input Queue
+       ↓
+    ┌──────────────┐
+    │ Stage 1: IF  │─────> IF/ID Pipeline Register
+    └──────────────┘
+       ↓
+    ┌──────────────┐
+    │ Stage 2: ID  │─────> ID/EX Pipeline Register
+    └──────────────┘
+       ↓
+    ┌──────────────┐
+    │ Stage 3: EX  │─────> EX/MEM Pipeline Register
+    └──────────────┘
+       ↓
+    ┌──────────────┐
+    │ Stage 4: MEM │─────> MEM/WB Pipeline Register
+    └──────────────┘
+       ↓
+    ┌──────────────┐
+    │ Stage 5: WB  │────> Output Queue
+    └──────────────┘
+
+각 스테이지를 독립 모듈로:
+- pipe_if_stage.v (명령어 Fetch)
+- pipe_id_stage.v (명령어 Decode)
+- pipe_ex_stage.v (Execute)
+- pipe_mem_stage.v (Memory Access)
+- pipe_wb_stage.v (Write Back)
+
+장점:
+✓ 각 스테이지 독립 최적화
+✓ Hazard 관리 명확
+✓ 성능 분석 용이
+✓ 파이프라인 추가 쉬움 (6/7 단계 확장)
+✓ 각 스테이지별 검증 독립
+
+사용:
+- 매우 높은 성능 필요
+- 자세한 파이프라인 제어 필요
+- 멀티코어로 확장할 때
+
+==============================================================================
+2. 방법별 선택 기준
+==============================================================================
+
+현재 프로젝트 상황:
+- ORCA 설계 완료 (31개 모듈)
+- 멀티클록 도메인 (sys/pci/sdram)
+- 단일 프로세서 + 가속기
+
+추천 순서:
+
+🥇 1순위: CDC 중심 계층화 (방법 2)
+   - 현재 설계와 완벽 호환
+   - CDC 자동 검증 가능
+   - 즉시 적용 가능
+   - 검증 신뢰성 향상
+
+🥈 2순위: AXI Bus 기반 (방법 3)
+   - 향후 마스터/슬레이브 추가 계획
+   - 높은 확장성 원함
+   - 장기 프로젝트
+
+🥉 3순위: Dataflow Pipeline (방법 4)
+   - 매우 높은 성능 필요
+   - 파이프라인 심화 학습
+
+==============================================================================
+3. 최종 추천: Hybrid 방식
+==============================================================================
+
+CDC + 5-Block + AXI 준비
+
+구조:
+    ORCA_TOP (CDC 기반)
+    ├─ RISC_SUBSYSTEM (AXI Master 준비)
+    ├─ BLENDER_SUBSYSTEM (AXI Master 준비)
+    ├─ PCI_INTERFACE (AXI Slave)
+    ├─ SDRAM_INTERFACE (AXI Slave)
+    └─ CLK_PWR_SUBSYSTEM
+
+단계별 구현:
+1단계: CDC 기반 계층화 (1-2주) ← 지금 시작
+2단계: AXI Adapter 추가 (2-3주)
+3단계: 전체 AXI 마이그레이션 (3-4주)
+
+이렇게 하면:
+- 즉시이득: CDC 검증, 모듈성
+- 장기이득: AXI 확장성
+
+==============================================================================
+
+결론: CDC 중심 계층화가 현재 ORCA 프로젝트에
+가장 적합하고 신뢰성 있는 방법입니다!
+
+AXI는 향후 마스터/슬레이스 추가 시 고려하세요.

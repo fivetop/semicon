@@ -1,0 +1,33 @@
+ORCA/2_Synthesis 0_Script 요약
+
+1_run_syn_setup
+- .synopsys_dc.setup 파일을 불러와 Design Compiler 환경을 설정한다.
+
+2_run_syn_read_verilog
+- ORCA 설계와 관련된 RTL Verilog 파일들을 모두 읽어와 `ORCA`라는 디자인으로 설정.
+
+2b_run_syn_read_verilog
+- analyze/ elaborate 절차로 동일한 Verilog 파일들을 읽고 구현, `ORCA` 디자인으로 확정.
+
+3_run_syn_link_check
+- 현재 디자인을 링크한 뒤, connectivity 체크를 수행하고 결과를 리포트(ORCA.chk_design.rpt).
+- DDC, Verilog netlist를 언매핑 출력 폴더에 작성.
+
+4_run_syn_constraints
+- 타이밍/면적 제약을 외부 제약 파일(1_Input/Constraint/Constraint.con)에서 가져온다.
+- 특정 라이브러리 셀(`LAS*`, `LAR*`)을 사용 금지로 설정.
+
+5_run_syn_compile
+- 컴파일 관련 설정들을 적용 (tri wire, reset ideal, set_ideal_network, set_dont_touch 등).
+- 그룹 정의, DRC 비활성, clock gating 스타일, scan FF 컴파일, incremental compile 등을 명시.
+
+6_run_syn_report
+- 클럭, QOR, 계층, 면적, 셀, 타이밍, 제약 위반 등 다양한 리포트를 `4_Report` 폴더에 생성.
+- 포트, 리소스, 인터클럭 관계 등 추가 리포트 포함.
+
+7_run_syn_write_output
+- 기구적 이름변환 룰(verilog) 적용.
+- 매핑 후 DDC, Verilog 게이트넷리스트, SDC 파일을 `2_Output/mapped`에 작성.
+
+---
+이 텍스트는 ORCA 워크플로우의 각 단계 스크립트 역할을 간략히 정리한 것이며, 필요한 경우 세부 동작은 각 스크립트 파일을 참조하십시오.

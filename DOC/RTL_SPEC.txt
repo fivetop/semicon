@@ -1,0 +1,416 @@
+ORCA RTL 설계 스펙 (RTL Specification)
+
+==============================================================================
+1. 설계 개요
+==============================================================================
+
+1.1 설계명
+- ORCA: 32-bit RISC 프로세서 + 멀티미디어 가속기(Blender) 통합 설계
+
+1.2 설계 목표
+- RISC 기반 명령어 처리 및 실행 (5-단계 파이프라인)
+- PCI 인터페이스를 통한 외부 데이터 통신
+- SDRAM 메모리 접근 제어
+- 멀티미디어 연산(Blender) 가속
+
+1.3 기술 사양
+- 언어: Verilog HDL
+- 프로세스: 32nm SAED PDK
+- 클록: 다중 클록 도메인 (sys_clk 125MHz, pclk 66MHz, sdram_clk)
+- 데이터 폭: 16비트(RISC 코어), 32비트(PCI/SDRAM/Blender)
+- 메모리: SDRAM 1K × 16bit (주소 10비트)
+
+==============================================================================
+2. 아키텍처
+==============================================================================
+
+2.1 최상위 계층 (ORCA_TOP)
+┌─────────────────────────────────────────────────────────┐
+│                      ORCA_TOP                           │
+├─────────────────────────────────────────────────────────┤
+│  RISC Core  │  PCI I/F  │  SDRAM I/F  │  Blender  │ ...│
+└─────────────────────────────────────────────────────────┘
+  16-bit        66MHz        16-bit       32-bit
+  125MHz        16-bit       64/64 FIFO  Pipeline
+
+2.2 시스템 블록 다이어그램
+
+System Clock (125MHz)  ─┐
+                        ├──> CLOCK_GEN ──> sys_clk, sys_2x_clk
+PCI Clock (66MHz)      ─┤
+SDRAM Clock            ─┘
+
+RISC_CORE (16-bit)
+├─ CONTROL        (명령어 해석, 제어 신호 발생)
+├─ DATA_PATH      (데이터 경로 관리)
+├─ ALU             (16-bit 연산)
+└─ REG_FILE       (16-bit × 64)
+
+INSTRUCTION PIPELINE (5-stage)
+├─ FETCH    (PRGRM_CNT_TOP 로부터 PC)
+├─ READ_OPS (REG_FILE 읽기)
+├─ EXECUTE  (ALU 실행)
+├─ WRITEBACK (결과 저장)
+└─ FSM 제어 (PRGRM_FSM)
+
+MEMORY INTERFACE
+├─ PCI_CORE
+│  ├─ PCI_RFIFO (32-bit, depth=32)
+│  ├─ PCI_WFIFO (32-bit, depth=32)
+│  └─ PCI_W_MUX (data 선택)
+│
+└─ SDRAM_IF
+   ├─ SDRAM_RFIFO (32-bit, depth=64)
+   ├─ SDRAM_WFIFO (32-bit, depth=64)
+   └─ SD_W_MUX (data 선택)
+
+ACCELERATOR
+├─ BLENDER      (색상 처리, 3-stage pipeline)
+├─ PARSER       (명령어 해석)
+└─ CONTEXT_MEM (32-bit × 4)
+
+==============================================================================
+3. 핵심 서브시스템
+==============================================================================
+
+3.1 RISC 프로세서 코어 (16-bit)
+
+3.1.1 프로그램 카운터 (PRGRM_CNT_TOP)
+- 기능: 명령어 순서 관리, 분기 제어
+- 구성:
+  * PRGRM_FSM: 상태 управления
+    - RESET_STATE(0) → FETCH(1) → READ(2) → EXECUTE(3) → WRITEBACK(4) → FETCH
+  * PRGRM_DECODE: 조건부 분기 결정
+  * PRGRM_CNT: 8-bit PC 레지스터
+- 제어 신호:
+  * Incrmnt_PC: PC 증가
+  * Ld_Brnch_Addr: 분기 주소 로드
+  * Ld_Rtn_Addr: 리턴 주소 로드
+
+3.1.2 제어 유닛 (CONTROL)
+- 기능: 명령어 디코딩, 제어 신호 생성
+- 입력: Crnt_Instrn(32-bit), Flags(Zro/Neg/Carry)
+- 주요 출력:
+  * Latch_Instr: 명령어 래치 신호
+  * Rd_Oprnd_A/B: 오퍼랜드 읽기 신호
+  * Latch_Flags: 플래그 래치
+  * Write_RegC: 레지스터 쓰기
+  * UseData_Imm_Or_RegB: 즉시값/레지스터 선택
+  * UseData_Imm_Or_ALU: 데이터 소스 선택
+
+3.1.3 데이터 경로 (DATA_PATH)
+- 기능: 레지스터 읽기/쓰기, ALU 입력/출력 관리
+- 오퍼랜드: Oprnd_A/B (16-bit)
+- 결과: Op_Result (16-bit)
+- 플래그 관리: ALU 플래그와 PSW 플래그 선택
+
+3.1.4 산술논리 유닛 (ALU)
+- 입력:
+  * Oprnd_A, Oprnd_B (16-bit 각)
+  * ALU_OP (6-bit 연산 코드)
+- 출력:
+  * Lachd_Result (16-bit 결과)
+  * Flags: Zro_Flag, Neg_Flag, Carry_Flag
+- 지원 연산: ADD, SUB, AND, OR, XOR, SHIFT, MUL 등
+
+3.1.5 레지스터 파일 (REG_FILE)
+- 구조: 16-bit × 64 (추정)
+- 포트:
+  * Read A: Addr_A → RegPort_A
+  * Read B: Addr_B → RegPort_B
+  * Write C: Addr_C, RegPort_C (Write_RegC 신호 시)
+- 클록: posedge clk
+
+3.1.6 명령어 래치 (INSTRN_LAT)
+- 32-bit 명령어 저장
+- 출력: Crnt_Instrn_1, Crnt_Instrn_2 (Latch_Instr 신호 시)
+
+3.2 메모리 인터페이스
+
+3.2.1 PCI 인터페이스 (66MHz, 16-bit)
+모듈: PCI_CORE, PCI_RFIFO, PCI_WFIFO, PCI_W_MUX
+
+신호:
+- pclk: 66MHz 클록
+- pci_rst_n: 리셋 (로우 액티브)
+- pidsel: 디바이스 선택
+- pgnt_n: 그랜트 신호
+- pframe_n, ptrdy_n, pirdy_n, pdevsel_n: 핸드셰이크
+- pad_in/pad_out: 16-bit 양방향 데이터 버스
+- ppar_in/ppar_out: 패리티
+- pc_be_in/pc_be_out: Byte Enable (4-bit)
+
+FIFO 구조:
+- PCI_RFIFO: 32-bit × 32 (비동기 Push/Pop)
+  * 상태: empty, ae, hf, af, full, error
+- PCI_WFIFO: 32-bit × 32 (비동기 Push/Pop)
+
+데이터 선택 (PCI_W_MUX):
+- pci_w_select == 2'b01: Blender 데이터
+- pci_w_select == 2'b10: SDRAM 읽기 데이터
+- 기본: RISC 결과 데이터
+
+3.2.2 SDRAM 인터페이스 (16-bit)
+모듈: SDRAM_IF, SDRAM_RFIFO, SDRAM_WFIFO, SD_W_MUX
+
+사양:
+- 주소 폭: 10-bit (1K × 16)
+- 데이터 폭: 16-bit
+- 클록: sdram_clk
+
+FIFO 구조:
+- SDRAM_RFIFO: 32-bit × 64 (비동기 Push/Pop)
+- SDRAM_WFIFO: 32-bit × 64 (비동기 Push/Pop)
+
+데이터 선택 (SD_W_MUX):
+- sd_w_select에 따라 PCI 또는 RISC 데이터 선택
+
+3.3 스택 메모리 (STACK)
+모듈: STACK_TOP, STACK_FSM, STACK_MEM
+
+기능:
+- 함수 호출 시 리턴 주소 저장
+- LIFO (Last In First Out) 동작
+- Push/Pop 제어
+
+3.4 멀티미디어 가속기
+
+3.4.1 Blender (32-bit)
+- 기능: 색상 처리 및 블렌딩 연산
+- 입력: op1, op2 (32-bit 각), operation (4-bit)
+- 출력: result (32-bit)
+
+3-stage Pipeline:
+```
+Stage 1: s1_op1, s1_op2 (입력 레지스터)
+         ↓
+Stage 2: s2_op1, s2_op2 (중간 레지스터)
+         ↓
+Stage 3: s3_op1 (출력 레지스터)
+         ↓
+         result
+```
+
+색상 성분: trans(투명도), red, green, blue
+- rem_red, rem_green, rem_blue: 잔여값 저장
+- c_trans, c_rem_*: 캐리 신호
+
+제어:
+- clk_enable: 파이프라인 활성화
+- test_mode: 테스트 모드
+
+3.4.2 Parser (PARSER)
+- 기능: 명령어 해석, 동작 제어
+- 입력: pcmd (4-bit), pcmd_valid
+- 출력:
+  * pcmd_out: 다음 명령어
+  * blender_op: Blender 연산 코드
+  * blender_clk_en: Blender 클록 활성화
+  * context_en: Context 메모리 활성화
+  * FIFO 제어 신호
+
+3.4.3 Context 메모리 (CONTEXT_MEM)
+- 32-bit × 4 저장소
+- 명령어: cmd (8-bit)
+- 읽기 주소: ram_read_addr (6-bit)
+- 쓰기 주소: ram_write_addr (6-bit)
+
+3.5 클록 및 전원 관리
+
+3.5.1 클록 생성 (CLOCK_GEN)
+- 입력: pclk, sdram_clk, sys_clk, test_mode, powersave
+- 출력: o_pclk, o_sdram_clk, o_sys_clk, o_sys_2x_clk
+- 기능:
+  * PLL 기반 클록 배수 생성
+  * 전력 절감 모드 지원 (powersave)
+  * 테스트 모드 클록 제어
+
+3.5.2 클록 멀티플라이어 (CLKMUL)
+- CLK_1X, CLK_2X 출력
+- NBUFFX4_RVT 버퍼 사용 (대전류 구동)
+
+3.5.3 리셋 제어 (RESET_BLOCK)
+- 리셋 신호 동기화
+- 4개 리셋 신호 처리:
+  * pci_rst_n (PCI 리셋)
+  * sdram_rst_n (SDRAM 리셋)
+  * sys_rst_n (시스템 리셋)
+  * sys_2x_rst_n (2x 시스템 리셋)
+
+3.5.4 I/O 전원 (IOPOWER)
+- I/O 전원 분산:
+  * IOVDD_NS: I/O VDD (4개 위치: L/R/B/T)
+  * IOVSS_NS: I/O VSS (4개 위치)
+- Core 전원:
+  * VDD_NS: Core VDD (8개)
+  * VSS_NS: Core VSS (8개)
+
+==============================================================================
+4. 신호 인터페이스
+==============================================================================
+
+4.1 전역 신호
+- clk: 시스템 클록 입력
+- reset_n: 리셋 신호 (로우 액티브)
+- test_mode: 테스트 모드 활성화
+- scan_en: Scan 테스트 활성화
+- powersave: 전력 절감 모드
+
+4.2 명령어 경로
+- Crnt_Instrn (32-bit): 현재 실행 중인 명령어
+- PC (8-bit): 프로그램 카운터
+- Current_State (3-bit): 파이프라인 상태
+
+4.3 데이터 경로
+- RegPort_A, RegPort_B (16-bit): 레지스터 읽기 데이터
+- RegPort_C (16-bit): 레지스터 쓰기 데이터
+- Op_Result (16-bit): ALU 결과
+- Oprnd_A, Oprnd_B (16-bit): ALU 오퍼랜드
+
+4.4 PCI 버스
+- pad_in[15:0]: PCI 입력 데이터
+- pad_out[15:0]: PCI 출력 데이터
+- pad_en: 출력 활성화 (OE)
+- ppar_in/ppar_out: 패리티 신호
+- pc_be[3:0]: Byte Enable
+
+4.5 SDRAM 버스
+- 주소: sd_addr[9:0]
+- 데이터 읽기: sd_dq_in[15:0]
+- 데이터 쓰기: sd_dq_out[15:0]
+- 제어: we_n (쓰기 활성화), ce_n (칩 활성화)
+
+4.6 플래그 신호
+- Zro_Flag: Zero 플래그 (결과 = 0)
+- Neg_Flag: Negative 플래그 (결과 < 0)
+- Carry_Flag: Carry 플래그 (오버플로우)
+
+==============================================================================
+5. 설계 특성
+==============================================================================
+
+5.1 클록 도메인
+1) sys_clk (125MHz): 시스템 클록
+   - RISC 코어, 제어 로직, 레지스터 파일
+2) pclk (66MHz): PCI 클록
+   - PCI 인터페이스, 관련 FIFO
+3) sdram_clk: SDRAM 클록
+   - SDRAM 인터페이스, SDRAM FIFO
+
+비동기 FIFO (Gray 코드 기반)로 클록 도메인 간 데이터 교환
+
+5.2 파이프라인 구조
+- 5-단계 파이프라인
+- 분기 시 파이프라인 플러시 (Branch Flush)
+- 해저드 처리:
+  * RAW (Read After Write): Operand forwarding
+  * WAW (Write After Write): Sequencing
+
+5.3 테스트 구조
+- Scan 테스트 지원
+- IDDQ 테스트 지원 (전원 누설 검사)
+- BIST (Built-In Self Test) 가능
+
+5.4 전력 관리
+- 클록 게이팅: Unused 모듈 클록 차단
+- Idle 모드: powersave 신호로 클록 게이팅
+- 누설 전류 최소화: 지정된 셀(LAS, LAR) 제외
+
+==============================================================================
+6. 설계 규칙 (Design Rules)
+==============================================================================
+
+6.1 금지 사항
+- LAS, LAR 라이브러리 셀 사용 금지
+- Tri-state 버스 최소화
+- 비동기 리셋 최소화
+
+6.2 필수 사항
+- 리셋 신호: Ideal Network으로 처리
+  * pci_rst_n, sdram_rst_n, sys_rst_n, sys_2x_rst_n
+- 클록 신호: Ideal Network으로 처리
+  * PLL 출력, Clock Mux 출력
+- Clock Gating: CGLPPRX8_RVT 셀 사용
+  * max_fanout: 16
+  * 2-stage control point
+
+6.3 최적화 전략
+- Incremental Compile: set_critical_range 2.0ns
+- Scan FF 포함 (compile -scan -gate_clock)
+- reg-reg 경로 최적화
+
+==============================================================================
+7. RTL 모듈 목록 (31개)
+==============================================================================
+
+Top-level (2):
+  ORCA.v, ORCA_TOP.v
+
+RISC Core (5):
+  RISC_CORE.v, CONTROL.v, DATA_PATH.v, ALU.v, REG_FILE.v
+
+Instruction Pipeline (4):
+  INSTRN_LAT.v, PRGRM_CNT_TOP.v, PRGRM_FSM.v, PRGRM_DECODE.v, PRGRM_CNT.v
+
+Memory (3):
+  STACK_TOP.v, STACK_FSM.v, STACK_MEM.v
+
+PCI Interface (3):
+  PCI_CORE.v, PCI_RFIFO.v, PCI_WFIFO.v, PCI_W_MUX.v
+
+SDRAM Interface (4):
+  SDRAM_IF.v, SDRAM_RFIFO.v, SDRAM_WFIFO.v, SD_W_MUX.v
+
+Accelerator (3):
+  BLENDER.v, PARSER.v, CONTEXT_MEM.v
+
+Clock & Power (4):
+  CLOCK_GEN.v, CLKMUL.v, RESET_BLOCK.v, IOPOWER.v
+
+==============================================================================
+8. 설계 트리 (Hierarchy)
+==============================================================================
+
+ORCA_TOP
+├─ RISC_CORE
+├─ PRGRM_CNT_TOP
+│  ├─ PRGRM_FSM
+│  ├─ PRGRM_DECODE
+│  └─ PRGRM_CNT
+├─ PCI_CORE
+├─ PCI_RFIFO
+├─ PCI_WFIFO
+├─ PCI_W_MUX
+├─ SDRAM_IF
+├─ SDRAM_RFIFO
+├─ SDRAM_WFIFO
+├─ SD_W_MUX
+├─ STACK_TOP
+│  ├─ STACK_FSM
+│  └─ STACK_MEM
+├─ BLENDER
+├─ PARSER
+├─ CONTEXT_MEM
+├─ CLOCK_GEN
+│  ├─ PLL
+│  └─ CLKMUL
+├─ RESET_BLOCK
+└─ IOPOWER
+
+==============================================================================
+9. 주요 매개변수 (Parameters)
+==============================================================================
+
+ORCA.v 및 ORCA_TOP.v:
+- sd_a_width: 10 (SDRAM 주소 폭)
+- sd_dq_width: 16 (SDRAM 데이터 폭)
+- sd_rfifo_depth: 64 (SDRAM Read FIFO 깊이)
+- sd_wfifo_depth: 64 (SDRAM Write FIFO 깊이)
+- pci_data_width: 16 (PCI 데이터 폭, 원래는 32)
+- pci_rfifo_depth: 32 (PCI Read FIFO 깊이)
+- pci_wfifo_depth: 32 (PCI Write FIFO 깊이)
+
+==============================================================================
+
+이 문서는 ORCA RTL 설계의 종합 스펙입니다.
+모든 모듈의 기능과 인터페이스, 설계 규칙을 포함합니다.
